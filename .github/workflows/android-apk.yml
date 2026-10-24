@@ -73,7 +73,7 @@ jobs:
       - name: Renommer
         run: cp build/app/outputs/flutter-apk/app-release.apk mywifizone-test.apk
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mywifizone-apk
           path: mobile/mywifizone-test.apk
