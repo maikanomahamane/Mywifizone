@@ -236,5 +236,13 @@
   "serviceName": "Name",
   "serviceUrl": "Address (https)",
   "serviceUrlHelp": "Official address only, no username or password.",
-  "errPortalUnavailable": "The portal is unavailable (subscription or plan)."
+  "errPortalUnavailable": "The portal is unavailable (subscription or plan).",
+  "createAccount": "Create an account",
+  "registerTitle": "Create my account",
+  "yourName": "Your name",
+  "businessName": "Your WiFi zone name",
+  "registerButton": "Create my account",
+  "haveAccount": "I already have an account",
+  "passwordHint": "At least 8 characters",
+  "errRegisterInvalid": "Check the fields: password of at least 8 characters, valid phone or e-mail not already in use."
 }

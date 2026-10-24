@@ -236,5 +236,13 @@
   "serviceName": "الاسم",
   "serviceUrl": "العنوان (https)",
   "serviceUrlHelp": "العنوان الرسمي فقط، بدون اسم مستخدم أو كلمة مرور.",
-  "errPortalUnavailable": "البوابة غير متاحة (الاشتراك أو الباقة)."
+  "errPortalUnavailable": "البوابة غير متاحة (الاشتراك أو الباقة).",
+  "createAccount": "إنشاء حساب",
+  "registerTitle": "إنشاء حسابي",
+  "yourName": "اسمك",
+  "businessName": "اسم منطقة الواي فاي",
+  "registerButton": "إنشاء حسابي",
+  "haveAccount": "لدي حساب بالفعل",
+  "passwordHint": "8 أحرف على الأقل",
+  "errRegisterInvalid": "تحقق من الحقول: كلمة مرور من 8 أحرف على الأقل، وهاتف أو بريد إلكتروني صالح وغير مستخدم."
 }

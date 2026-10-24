@@ -145,6 +145,34 @@ class ApiClient {
     }
   }
 
+  /// Inscription d'un nouveau propriétaire (crée le tenant et l'essai). Stocke les jetons et renvoie le profil.
+  Future<Map<String, dynamic>> register({
+    required String name,
+    required String businessName,
+    required String identifier,
+    required String password,
+  }) async {
+    try {
+      final isEmail = identifier.contains('@');
+      final res = await dio.post('/auth/register', data: {
+        'name': name,
+        'business_name': businessName,
+        if (isEmail) 'email': identifier else 'phone': identifier,
+        'password': password,
+        'device_name': 'mobile',
+      });
+      final data = res.data['data'] as Map<String, dynamic>;
+      final tokens = data['tokens'] as Map<String, dynamic>;
+      await _tokens.save(
+        access: tokens['access_token'] as String,
+        refresh: tokens['refresh_token'] as String,
+      );
+      return data['user'] as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw _toApiException(e);
+    }
+  }
+
   ApiException _toApiException(DioException e) {
     final body = e.response?.data;
     if (body is Map && body['errors'] is List && (body['errors'] as List).isNotEmpty) {

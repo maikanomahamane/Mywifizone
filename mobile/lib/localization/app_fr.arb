@@ -236,5 +236,13 @@
   "serviceName": "Nom",
   "serviceUrl": "Adresse (https)",
   "serviceUrlHelp": "Adresse officielle uniquement, sans identifiant ni mot de passe.",
-  "errPortalUnavailable": "Le portail est indisponible (abonnement ou formule)."
+  "errPortalUnavailable": "Le portail est indisponible (abonnement ou formule).",
+  "createAccount": "Créer un compte",
+  "registerTitle": "Créer mon compte",
+  "yourName": "Votre nom",
+  "businessName": "Nom de votre WiFi zone",
+  "registerButton": "Créer mon compte",
+  "haveAccount": "J'ai déjà un compte",
+  "passwordHint": "8 caractères minimum",
+  "errRegisterInvalid": "Vérifiez les champs : mot de passe de 8 caractères minimum, téléphone ou e-mail valide et pas déjà utilisé."
 }

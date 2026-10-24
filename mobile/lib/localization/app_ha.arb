@@ -236,5 +236,13 @@
   "serviceName": "Suna",
   "serviceUrl": "Adireshi (https)",
   "serviceUrlHelp": "Adireshin hukuma kawai, ba sunan mai amfani ko kalmar sirri.",
-  "errPortalUnavailable": "Shafin baya aiki (biyan kuɗi ko tsari)."
+  "errPortalUnavailable": "Shafin baya aiki (biyan kuɗi ko tsari).",
+  "createAccount": "Ƙirƙiri asusu",
+  "registerTitle": "Ƙirƙiri asusuna",
+  "yourName": "Sunanka",
+  "businessName": "Sunan WiFi zone ɗinka",
+  "registerButton": "Ƙirƙiri asusuna",
+  "haveAccount": "Ina da asusu",
+  "passwordHint": "Haruffa 8 a ƙalla",
+  "errRegisterInvalid": "Duba filayen: kalmar sirri haruffa 8 a ƙalla, waya ko imel mai inganci wanda ba a riga an yi amfani da shi ba."
 }

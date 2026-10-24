@@ -145,6 +145,11 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 strokeWidth: 2, color: Colors.white))
                         : Text(t.loginButton),
                   ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: _loading ? null : () => context.push('/register'),
+                    child: Text(t.createAccount),
+                  ),
                 ],
               ),
             ),
