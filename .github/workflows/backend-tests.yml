@@ -52,7 +52,7 @@ jobs:
       - name: Scripts shell (syntaxe + secrets)
         run: |
           for f in scripts/*.sh; do bash -n "$f"; done
-          bash scripts/scan-secrets.sh .
+          # Le scan des secrets du dépôt est fait par le workflow « Sécurité » (ici, backend/.env généré le fausserait).
 
   # Mêmes tests sur PostgreSQL 16 : la suite principale tourne sur SQLite, qui ne voit pas les écarts de dialecte
   # (verrous FOR UPDATE SKIP LOCKED, contraintes uniques, types uuid, index partiels).
