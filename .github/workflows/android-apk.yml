@@ -78,7 +78,7 @@ jobs:
           code=$?
           tail -n 120 test.txt
           if [ $code -ne 0 ]; then
-            grep -nE '\[E\]|Expected:|Actual:|Which:|EXCEPTION|Failed|Error:|test/.*dart' test.txt | head -30 | while IFS= read -r l; do echo "::error::${l//%/%25}"; done
+            grep -m1 -A22 'EXCEPTION CAUGHT' test.txt | grep -v '^$' | while IFS= read -r l; do echo "::error::${l//%/%25}"; done
           fi
           exit $code
 
