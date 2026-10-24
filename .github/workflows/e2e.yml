@@ -16,7 +16,15 @@ jobs:
       - name: Installation (make setup)
         run: make setup
       - name: Migrations et données de base
-        run: make migrate
+        run: |
+          set +e
+          make migrate > migrate-out.txt 2>&1
+          code=$?
+          tail -n 40 migrate-out.txt
+          if [ $code -ne 0 ]; then
+            sed -E 's/\x1b\[[0-9;]*m//g' migrate-out.txt | grep -v -E '^#[0-9]+ ' | tail -n 30 | cut -c1-300 | awk '{printf "%s%%0A", $0} END{print ""}' | while IFS= read -r l; do echo "::error::MIGRATE $l"; done
+          fi
+          exit $code
       - name: Démarrage de la pile
         run: |
           docker compose up -d

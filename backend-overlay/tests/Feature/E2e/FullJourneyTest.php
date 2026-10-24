@@ -113,6 +113,7 @@ class FullJourneyTest extends TestCase
         $this->assertNotEmpty($staff->json('data.id'));
 
         // 8. Les ventes du propriétaire : comptoir + portail.
+        $this->app['auth']->forgetGuards();
         $this->withToken($owner)->getJson('/api/v1/sales')->assertOk()->assertJsonPath('meta.total', 2);
     }
 }
