@@ -7,7 +7,8 @@ APP=/var/www/html
 
 if [ ! -f "$APP/artisan" ]; then
   tmp=$(mktemp -d)
-  composer create-project laravel/laravel:^12.0 "$tmp" --no-interaction --prefer-dist
+  # --no-scripts : le script post-création du squelette lancerait `artisan migrate` sur la base PostgreSQL (table users par défaut).
+  composer create-project laravel/laravel:^12.0 "$tmp" --no-interaction --prefer-dist --no-scripts
   cp -a "$tmp"/. "$APP"/
   rm -rf "$tmp"
 fi
