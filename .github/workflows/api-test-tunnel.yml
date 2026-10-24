@@ -12,6 +12,10 @@ on:
         required: false
         default: "240"
 
+permissions:
+  contents: write   # publier l'URL dans la release « api-live »
+  actions: write    # lancer la construction de l'APK qui pointe sur cette URL
+
 jobs:
   api:
     runs-on: ubuntu-latest
@@ -59,6 +63,21 @@ jobs:
           echo "$URL/api/v1" > api_url.txt
           echo "::notice title=API_URL::API_URL=$URL/api/v1"
           echo "### API de test : \`$URL/api/v1\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publier l'URL et construire l'APK correspondant
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          API=$(cat api_url.txt)
+          BODY="URL de l'API de test (temporaire, valable jusqu'à ~$(date -u -d '+${{ github.event.inputs.minutes }} minutes' +%H:%M) UTC) : $API"
+          if gh api repos/${{ github.repository }}/releases/tags/api-live >/dev/null 2>&1; then
+            RID=$(gh api repos/${{ github.repository }}/releases/tags/api-live --jq .id)
+            gh api -X PATCH repos/${{ github.repository }}/releases/$RID -f body="$BODY" >/dev/null
+          else
+            gh api -X POST repos/${{ github.repository }}/releases -f tag_name=api-live -f name="API de test (live)" -f body="$BODY" -f target_commitish=${{ github.sha }} -F prerelease=true >/dev/null
+          fi
+          gh api -X POST repos/${{ github.repository }}/actions/workflows/android-apk.yml/dispatches \
+            -f ref=main -f "inputs[api_base_url]=$API" -f "inputs[allow_cleartext]=false"
 
       - name: Maintien en vie
         run: |
