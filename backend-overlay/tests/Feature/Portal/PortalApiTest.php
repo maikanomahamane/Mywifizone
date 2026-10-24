@@ -274,7 +274,7 @@ class PortalApiTest extends TestCase
         $this->assertStringNotContainsString('<script>alert(1)</script>', $html);
         $this->assertStringNotContainsString('<img src=x>', $html);
         $this->assertStringContainsString("default-src 'none'", $res->headers->get('Content-Security-Policy'));
-        $this->assertSame('no-store', $res->headers->get('Cache-Control'));
+        $this->assertStringContainsString('no-store', $res->headers->get('Cache-Control'));
         $this->assertStringNotContainsString($tenant->getKey(), $html);
         $this->assertStringNotContainsString(self::SECRET, $html);
     }

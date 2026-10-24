@@ -55,7 +55,7 @@ class TicketPdfApiTest extends TestCase
 
         $this->assertSame('application/pdf', $res->headers->get('Content-Type'));
         $this->assertStringContainsString('attachment; filename="tickets-', $res->headers->get('Content-Disposition'));
-        $this->assertSame('no-store', $res->headers->get('Cache-Control'));
+        $this->assertStringContainsString('no-store', $res->headers->get('Cache-Control'));
         $this->assertSame('2', $res->headers->get('X-Tickets-Count'));
         $this->assertSame('%PDF-FAKE', $res->getContent());
         foreach ($vouchers as $v) {

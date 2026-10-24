@@ -25,6 +25,6 @@ final class TicketQr
     {
         return is_string($url)
             && strlen($url) <= 200
-            && preg_match('#^https?://[^\s\x00-\x1F"\'<>\\\\]+$#i', $url) === 1;
+            && preg_match('#^https?://[^\s\x00-\x1F"\'<>\\\\]+$#iD', $url) === 1;
     }
 }

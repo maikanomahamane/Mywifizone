@@ -19,7 +19,7 @@ final class Rules
     public static function ownedBy(string $model): Closure
     {
         return function (string $attribute, mixed $value, Closure $fail) use ($model): void {
-            if (! is_string($value) || ! $model::query()->whereKey($value)->exists()) {
+            if (! is_string($value) || ! \Illuminate\Support\Str::isUuid($value) || ! $model::query()->whereKey($value)->exists()) {
                 $fail('Ressource introuvable.');
             }
         };

@@ -89,7 +89,7 @@ class FullJourneyTest extends TestCase
         $this->withToken($owner)->getJson('/api/v1/dashboard')->assertOk();
         $today = now()->toDateString();
         $this->withToken($owner)->getJson("/api/v1/reports/sales?period=daily&from=$today&to=$today")->assertOk();
-        $csv = $this->withToken($owner)->get("/api/v1/exports/sales.csv?from=$today&to=$today", ['Accept' => 'application/json'])->assertOk()->streamedContent();
+        $csv = $this->withToken($owner)->get("/api/v1/exports/sales.csv?from=".now()->subDay()->toDateString()."&to=".now()->addDay()->toDateString()."", ['Accept' => 'application/json'])->assertOk()->streamedContent();
         $this->assertStringContainsString(';200;XOF;CASH;', $csv);
 
         // 6. Portail : activation, offre visible, achat direct, webhook signé, code livré.

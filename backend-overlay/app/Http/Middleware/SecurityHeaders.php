@@ -30,7 +30,7 @@ class SecurityHeaders
             }
         }
         // Les réponses de l'API contiennent des données de compte : jamais de cache partagé.
-        if (! $h->has('Cache-Control')) {
+        if (! $h->has('Cache-Control') || $h->get('Cache-Control') === 'no-cache, private') {
             $h->set('Cache-Control', 'no-store');
         }
         if ($request->isSecure() && ! $h->has('Strict-Transport-Security')) {
