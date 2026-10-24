@@ -7,3 +7,6 @@ f="${1:?fichier}"; max="${2:-40}"
   grep -E "^\s*(FAIL|⨯|✕)|Tests:|SQLSTATE|Exception|Error|Failed asserting|Unable|not found|Undefined|Call to|Class \"|Could not" "$f" \
     | sed -E 's/^\s+//; s/[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.]+Z? ?//' | cut -c1-280 | sort | uniq -c | sort -rn | head -n "$max"
 } | while IFS= read -r l; do echo "::error::${l//%/%25}"; done
+# Toujours : FAIL de chaque test + dernières lignes brutes
+grep -E "FAILED|FAIL " "$f" | cut -c1-200 | head -30 | while IFS= read -r l; do echo "::error::${l//%/%25}"; done
+tail -n 25 "$f" | cut -c1-240 | while IFS= read -r l; do [ -n "$l" ] && echo "::error::TAIL ${l//%/%25}"; done
