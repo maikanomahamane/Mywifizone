@@ -20,6 +20,7 @@ cd "$APP"
 grep -q '"laravel/sanctum"' composer.json || composer require laravel/sanctum --no-interaction
 # Moteur PDF (Phase 5) : arabe, hausa et QR codes. Nécessite les extensions gd et mbstring (présentes dans docker/php).
 grep -q '"mpdf/mpdf"' composer.json || composer require mpdf/mpdf --no-interaction
+grep -q '"mpdf/qrcode"' composer.json || composer require mpdf/qrcode --no-interaction
 
 # Migration par défaut des utilisateurs remplacée par les nôtres (UUID, tenant_id)
 rm -f database/migrations/0001_01_01_000000_create_users_table.php

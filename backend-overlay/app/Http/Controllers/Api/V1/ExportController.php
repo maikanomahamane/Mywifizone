@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Domain\Business\PaymentMethod;
 use App\Domain\Documents\CsvWriter;
+use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
 use App\Models\HotspotProfile;
 use App\Models\Sale;
@@ -65,7 +66,8 @@ class ExportController extends Controller
 
         $name = 'ventes-'.$f['from'].'_'.$f['to'].'.csv';
 
-        return response()->streamDownload(function () use ($query, $tenantId) {
+        // Le flux s'exécute après le middleware tenant (contexte déjà nettoyé) : on le rétablit explicitement.
+        return response()->streamDownload(fn () => app(TenantContext::class)->run($tenantId, function () use ($query, $tenantId) {
             echo CsvWriter::BOM;
             echo CsvWriter::row(['id', 'date', 'sold_at_utc', 'status', 'amount_minor', 'currency', 'payment_method', 'reference', 'agent', 'plan', 'site_id']);
 
@@ -83,7 +85,7 @@ class ExportController extends Controller
                 }
                 flush();
             });
-        }, $name, [
+        }), $name, [
             'Content-Type' => 'text/csv; charset=UTF-8',
             'Cache-Control' => 'no-store',
             'X-Content-Type-Options' => 'nosniff',
