@@ -42,7 +42,9 @@ jobs:
 
       # Le dépôt ne contient que lib/, test/ et pubspec.yaml : on génère le projet Android autour.
       - name: Générer le projet Android
-        run: flutter create . --project-name mywifizone --org com.mywifizone --platforms=android
+        run: |
+          flutter create . --project-name mywifizone --org com.mywifizone --platforms=android
+          rm -f test/widget_test.dart   # test d'exemple généré, il référence une classe MyApp qui n'existe pas
 
       - name: Autoriser Internet et le HTTP en clair (APK de test)
         run: |
