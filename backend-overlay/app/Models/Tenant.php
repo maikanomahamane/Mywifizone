@@ -16,6 +16,8 @@ class Tenant extends Model
 
     public const STATUS_SUSPENDED = 'SUSPENDED';
 
+    protected $attributes = ['status' => 'ACTIVE'];
+
     protected $fillable = ['name', 'country', 'locale', 'currency', 'timezone', 'status'];
 
     public function users(): HasMany

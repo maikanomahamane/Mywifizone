@@ -22,6 +22,8 @@ class User extends Authenticatable
 
     public const STATUS_DISABLED = 'DISABLED';
 
+    protected $attributes = ['status' => 'ACTIVE'];
+
     protected $fillable = ['name', 'email', 'phone', 'password', 'locale'];
 
     protected $hidden = ['password'];
