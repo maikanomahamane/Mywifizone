@@ -60,7 +60,14 @@ jobs:
       - run: flutter gen-l10n
 
       - name: Analyse statique
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        run: |
+          set +e
+          flutter analyze --no-fatal-infos --no-fatal-warnings > analyze.txt 2>&1
+          code=$?
+          cat analyze.txt
+          # Erreurs en annotations (lisibles sans télécharger les journaux)
+          grep -E '^\s*error •' analyze.txt | head -40 | while IFS= read -r l; do echo "::error::${l//%/%25}"; done
+          exit $code
 
       - name: Tests
         run: flutter test
