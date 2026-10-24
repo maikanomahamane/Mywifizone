@@ -13,4 +13,4 @@ tail -n 25 "$f" | cut -c1-240 | while IFS= read -r l; do [ -n "$l" ] && echo "::
 # Détail de chaque échec (bloc multi-lignes)
 awk '/^[[:space:]]*(FAILED|FAIL)[[:space:]]/{if(b!="")print b; b=$0; n=0; next} b!=""&&n<9&&NF{b=b"%0A"$0; n++} END{if(b!="")print b}' "$f" | cut -c1-900 | head -12 | while IFS= read -r l; do echo "::error::DETAIL $l"; done
 # Dump du bloc d'échecs (tout après la première ligne contenant FAILED), par paquets de 14 lignes
-awk '/FAILED/{p=1} p&&NF' "$f" | sed -E 's/\x1b\[[0-9;]*m//g' | cut -c1-200 | head -150 | awk '{printf "%s%%0A", $0} NR%14==0{print ""} END{print ""}' | grep -v '^$' | head -10 | while IFS= read -r l; do echo "::error::BLOC $l"; done
+awk '/(^|[[:space:]])FAIL([[:space:]]|ED)/{p=1} p&&NF' "$f" | sed -E 's/\x1b\[[0-9;]*m//g' | cut -c1-200 | head -150 | awk '{printf "%s%%0A", $0} NR%14==0{print ""} END{print ""}' | grep -v '^$' | head -10 | while IFS= read -r l; do echo "::error::BLOC $l"; done
