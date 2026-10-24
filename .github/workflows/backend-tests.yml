@@ -92,7 +92,7 @@ jobs:
           php artisan test --configuration=phpunit.pgsql.xml > ../phpunit-out.txt 2>&1
           code=$?
           tail -n 60 ../phpunit-out.txt
-          [ $code -ne 0 ] && bash ../scripts/ci-annotate.sh ../phpunit-out.txt 40
+          if [ $code -ne 0 ]; then echo "::error::EXITCODE $code"; sed -E 's/\x1b\[[0-9;]*m//g' ../phpunit-out.txt | grep -n -i -B1 -A6 -E 'warn|notice|deprecat|risky|incomplete' | grep -v -E '^[0-9]+[-:]#[0-9]+ ' | head -40 | cut -c1-220 | awk '{printf "%s%%0A", $0} END{print ""}' | while IFS= read -r l; do echo "::error::NOTE $l"; done; fi
           exit $code
       - name: Audit des dépendances
         working-directory: backend
