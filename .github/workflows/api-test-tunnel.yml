@@ -1,0 +1,76 @@
+name: API de test (tunnel temporaire)
+
+# Lance la pile complète (nginx + php-fpm + worker + PostgreSQL + Redis) sur un runner GitHub et l'expose en HTTPS
+# via un tunnel Cloudflare « quick tunnel » (sans compte). TEMPORAIRE : l'URL change à chaque lancement et la pile
+# disparaît à la fin du délai. Données de test uniquement, paiements « mock » (jamais de vrai paiement).
+# L'URL à saisir dans l'app est publiée dans les annotations du job (« API_URL=... »).
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Durée de vie de l'API (minutes, 5 à 330)"
+        required: false
+        default: "240"
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configuration (secrets aléatoires, jamais ceux d'exemple)
+        run: |
+          cp .env.example .env
+          sed -i "s/^PAYMENT_MOCK_WEBHOOK_SECRET=.*/PAYMENT_MOCK_WEBHOOK_SECRET=$(openssl rand -hex 24)/" .env
+          grep -q '^PAYMENT_MOCK_ENABLED=true' .env
+
+      - name: Installation et migrations
+        run: |
+          make setup
+          make migrate
+
+      - name: Démarrage de la pile
+        run: |
+          docker compose up -d
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:8080/api/v1/health/ready >/dev/null 2>&1 && exit 0
+            sleep 3
+          done
+          docker compose logs --tail=80; exit 1
+
+      - name: Tunnel HTTPS
+        run: |
+          curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          nohup ./cloudflared tunnel --no-autoupdate --url http://localhost:8080 > tunnel.log 2>&1 &
+          for i in $(seq 1 40); do
+            URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
+            [ -n "$URL" ] && break
+            sleep 3
+          done
+          [ -n "$URL" ] || { cat tunnel.log; echo "tunnel indisponible" >&2; exit 1; }
+          # Le tunnel met quelques secondes à devenir joignable.
+          for i in $(seq 1 30); do
+            curl -fsS "$URL/api/v1/health" >/dev/null 2>&1 && break
+            sleep 3
+          done
+          curl -fsS "$URL/api/v1/health/ready" || true
+          echo "$URL/api/v1" > api_url.txt
+          echo "::notice title=API_URL::API_URL=$URL/api/v1"
+          echo "### API de test : \`$URL/api/v1\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Maintien en vie
+        run: |
+          M=${{ github.event.inputs.minutes }}
+          M=$(( M < 5 ? 5 : (M > 330 ? 330 : M) ))
+          end=$(( $(date +%s) + M*60 ))
+          while [ "$(date +%s)" -lt "$end" ]; do
+            sleep 60
+            URL=$(cat api_url.txt | sed 's#/api/v1##')
+            curl -fsS "$URL/api/v1/health" >/dev/null 2>&1 || echo "::warning::API injoignable à $(date -u +%H:%M)"
+          done
+
+      - name: Journaux
+        if: always()
+        run: docker compose logs --tail=100 || true
