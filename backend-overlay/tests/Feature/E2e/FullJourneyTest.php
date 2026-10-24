@@ -107,6 +107,7 @@ class FullJourneyTest extends TestCase
         // 7. Un agent d'équipe ne voit que ses ventes et ne gère pas le portail.
         $staff = $this->withToken($owner)->postJson('/api/v1/agents', ['name' => 'Aïcha', 'phone' => '+22790000001', 'password' => 'motdepasse-solide'])->assertCreated();
         $agentLogin = $this->postJson('/api/v1/auth/login', ['identifier' => '+22790000001', 'password' => 'motdepasse-solide', 'device_name' => 'e2e'])->assertOk()->json('data.tokens.access_token');
+        $this->app['auth']->forgetGuards();
         $this->withToken($agentLogin)->getJson('/api/v1/sales')->assertOk()->assertJsonPath('meta.total', 0);
         $this->withToken($agentLogin)->putJson('/api/v1/portal-settings', ['enabled' => false])->assertStatus(403);
         $this->assertNotEmpty($staff->json('data.id'));

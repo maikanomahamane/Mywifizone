@@ -21,7 +21,7 @@ jobs:
           composer create-project laravel/laravel:^12.0 backend --no-interaction --prefer-dist
           cd backend
           composer require laravel/sanctum --no-interaction
-          composer require mpdf/mpdf --no-interaction
+          composer require mpdf/mpdf mpdf/qrcode --no-interaction
           rm -f database/migrations/0001_01_01_000000_create_users_table.php database/migrations/*_create_personal_access_tokens_table.php
           cp -a ../backend-overlay/. .
           cp .env.example .env
@@ -79,7 +79,7 @@ jobs:
         run: |
           composer create-project laravel/laravel:^12.0 backend --no-interaction --prefer-dist
           cd backend
-          composer require laravel/sanctum mpdf/mpdf --no-interaction
+          composer require laravel/sanctum mpdf/mpdf mpdf/qrcode --no-interaction
           rm -f database/migrations/0001_01_01_000000_create_users_table.php database/migrations/*_create_personal_access_tokens_table.php
           cp -a ../backend-overlay/. .
           cp .env.example .env
