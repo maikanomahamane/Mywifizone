@@ -42,7 +42,9 @@ jobs:
 
       # Le dépôt ne contient que lib/, test/ et pubspec.yaml : on génère le projet Android autour.
       - name: Générer le projet Android
-        run: flutter create . --project-name mywifizone --org com.mywifizone --platforms=android
+        run: |
+          flutter create . --project-name mywifizone --org com.mywifizone --platforms=android
+          rm -f test/widget_test.dart   # test d'exemple généré, il référence une classe MyApp qui n'existe pas
 
       - name: Autoriser Internet et le HTTP en clair (APK de test)
         run: |
@@ -60,10 +62,25 @@ jobs:
       - run: flutter gen-l10n
 
       - name: Analyse statique
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        run: |
+          set +e
+          flutter analyze --no-fatal-infos --no-fatal-warnings > analyze.txt 2>&1
+          code=$?
+          cat analyze.txt
+          # Erreurs en annotations (lisibles sans télécharger les journaux)
+          grep -E '^\s*error •' analyze.txt | head -40 | while IFS= read -r l; do echo "::error::${l//%/%25}"; done
+          exit $code
 
       - name: Tests
-        run: flutter test
+        run: |
+          set +e
+          flutter test --reporter expanded > test.txt 2>&1
+          code=$?
+          tail -n 120 test.txt
+          if [ $code -ne 0 ]; then
+            grep -m1 -A22 'EXCEPTION CAUGHT' test.txt | grep -v '^$' | while IFS= read -r l; do echo "::error::${l//%/%25}"; done
+          fi
+          exit $code
 
       - name: Construire l'APK
         run: |
