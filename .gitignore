@@ -1,0 +1,8 @@
+.env
+/backend/
+!/backend/.gitkeep
+mobile/build/
+mobile/.dart_tool/
+.idea/
+.vscode/
+*.log

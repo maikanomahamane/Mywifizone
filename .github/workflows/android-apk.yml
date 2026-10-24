@@ -1,0 +1,91 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "URL de l'API (modifiable aussi dans l'app, sur l'écran de connexion)"
+        required: false
+        default: "http://10.0.2.2:8080/api/v1"
+      allow_cleartext:
+        description: "Autoriser le HTTP en clair (TEST sur réseau local). Mettre false pour tout build destiné à des utilisateurs : HTTPS obligatoire."
+        required: false
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths: ["mobile/**", ".github/workflows/android-apk.yml"]
+
+permissions:
+  contents: write   # publier l'APK dans une Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.27.4"
+          channel: stable
+          cache: true
+
+      # Le dépôt ne contient que lib/, test/ et pubspec.yaml : on génère le projet Android autour.
+      - name: Générer le projet Android
+        run: flutter create . --project-name mywifizone --org com.mywifizone --platforms=android
+
+      - name: Autoriser Internet et le HTTP en clair (APK de test)
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.INTERNET' "$M" || sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <application#' "$M"
+          if [ "${{ inputs.allow_cleartext }}" != "false" ]; then
+            sed -i 's#<application#<application android:usesCleartextTraffic="true"#' "$M"
+          else
+            sed -i 's#<application#<application android:usesCleartextTraffic="false"#' "$M"
+          fi
+          sed -i 's#android:label="[^"]*"#android:label="MY WIFIZONE"#' "$M"
+          cat "$M"
+
+      - run: flutter pub get
+      - run: flutter gen-l10n
+
+      - name: Analyse statique
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Tests
+        run: flutter test
+
+      - name: Construire l'APK
+        run: |
+          flutter build apk --release \
+            --dart-define=API_BASE_URL="${{ github.event.inputs.api_base_url || 'http://10.0.2.2:8080/api/v1' }}"
+
+      - name: Renommer
+        run: cp build/app/outputs/flutter-apk/app-release.apk mywifizone-test.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mywifizone-apk
+          path: mobile/mywifizone-test.apk
+          retention-days: 30
+
+      - name: Publier une Release de test
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          TAG="apk-test-${{ github.run_number }}"
+          gh release create "$TAG" mobile/mywifizone-test.apk \
+            --title "APK de test #${{ github.run_number }}" \
+            --notes "Build de test signé avec la clé de debug. Ne pas distribuer." --prerelease

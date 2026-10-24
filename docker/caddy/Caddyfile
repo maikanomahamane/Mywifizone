@@ -1,0 +1,18 @@
+# HTTPS automatique (Let's Encrypt) : le nom de domaine doit pointer vers ce serveur, ports 80 et 443 ouverts.
+{$APP_DOMAIN} {
+    encode gzip zstd
+
+    # L'API ne doit jamais être mise en cache par un intermédiaire ; les en-têtes de sécurité viennent de l'application.
+    reverse_proxy nginx:80 {
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # Les sondes d'exploitation ne sont pas exposées sur Internet : métriques via le réseau interne ou un tunnel.
+    @internal path /api/v1/internal/*
+    respond @internal 404
+
+    log {
+        output stderr
+        format json
+    }
+}

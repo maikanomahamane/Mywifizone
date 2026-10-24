@@ -1,0 +1,87 @@
+name: Backend tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ["backend-overlay/**", "scripts/**", "docker/**", "docker-compose*.yml", ".github/workflows/backend-tests.yml"]
+
+jobs:
+  phpunit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: mbstring, pdo_sqlite, sqlite3, bcmath, gd
+          tools: composer
+      - name: Squelette Laravel 12 + overlay
+        run: |
+          composer create-project laravel/laravel:^12.0 backend --no-interaction --prefer-dist
+          cd backend
+          composer require laravel/sanctum --no-interaction
+          composer require mpdf/mpdf --no-interaction
+          rm -f database/migrations/0001_01_01_000000_create_users_table.php database/migrations/*_create_personal_access_tokens_table.php
+          cp -a ../backend-overlay/. .
+          cp .env.example .env
+          php artisan key:generate --force
+          composer dump-autoload
+      - name: Tests (SQLite en mémoire)
+        working-directory: backend
+        run: php artisan test
+      - name: PDF d'exemple (contrôle visuel)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-pdfs
+          path: backend/storage/app/sample-pdfs
+          if-no-files-found: ignore
+      - name: Script du portail captif (Node)
+        run: node --test backend-overlay/tests/js/portal.test.js
+      - name: Logique de domaine pure
+        run: php scripts/smoke-domain.php
+      - name: Logique JavaScript du portail
+        run: node scripts/portal-js-test.js
+      - name: Scripts shell (syntaxe + secrets)
+        run: |
+          for f in scripts/*.sh; do bash -n "$f"; done
+          bash scripts/scan-secrets.sh .
+
+  # Mêmes tests sur PostgreSQL 16 : la suite principale tourne sur SQLite, qui ne voit pas les écarts de dialecte
+  # (verrous FOR UPDATE SKIP LOCKED, contraintes uniques, types uuid, index partiels).
+  phpunit-pgsql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mywifizone_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: mbstring, pdo_pgsql, bcmath, gd
+          tools: composer
+      - name: Squelette Laravel 12 + overlay
+        run: |
+          composer create-project laravel/laravel:^12.0 backend --no-interaction --prefer-dist
+          cd backend
+          composer require laravel/sanctum mpdf/mpdf --no-interaction
+          rm -f database/migrations/0001_01_01_000000_create_users_table.php database/migrations/*_create_personal_access_tokens_table.php
+          cp -a ../backend-overlay/. .
+          cp .env.example .env
+          php artisan key:generate --force
+          composer dump-autoload
+      - name: Tests (PostgreSQL)
+        working-directory: backend
+        run: php artisan test --configuration=phpunit.pgsql.xml
+      - name: Audit des dépendances
+        working-directory: backend
+        run: composer audit --no-interaction

@@ -1,0 +1,104 @@
+# Production : docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+# Seul Caddy publie des ports (80/443). Base, Redis et PHP ne publient aucun port : joignables uniquement entre conteneurs.
+name: mywifizone-prod
+
+x-app: &app
+  image: mywifizone-app:${APP_VERSION:-latest}
+  env_file: .env.production
+  restart: unless-stopped
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+  volumes:
+    - app_storage:/var/www/html/storage
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?définir APP_DOMAIN}
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [nginx]
+
+  nginx:
+    image: mywifizone-nginx:${APP_VERSION:-latest}
+    restart: unless-stopped
+    depends_on: [app]
+
+  app:
+    <<: *app
+    command: php-fpm
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep php-fpm >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *app
+    command: php artisan queue:work --tries=3 --timeout=90 --max-time=3600
+    stop_grace_period: 60s
+
+  scheduler:
+    <<: *app
+    command: php artisan schedule:work
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?définir REDIS_PASSWORD}"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  # Sauvegarde toutes les 24 h (à partir du démarrage) vers le volume `backups`, rotation 14 jours. Copier ce volume HORS du serveur (voir docs/deployment-guide.md).
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGUSER: ${DB_USERNAME}
+      PGPASSWORD: ${DB_PASSWORD}
+      PGDATABASE: ${DB_DATABASE}
+      BACKUP_DIR: /backups
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_PASSPHRASE_FILE: ${BACKUP_PASSPHRASE_FILE:-}
+    volumes:
+      - backups:/backups
+      - ./scripts:/scripts:ro
+    entrypoint: ["/bin/sh", "-c", "while true; do /scripts/backup-postgres.sh; sleep 86400; done"]
+    depends_on: {postgres: {condition: service_healthy}}
+
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:
+  app_storage:
+  backups:

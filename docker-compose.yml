@@ -1,0 +1,64 @@
+name: mywifizone
+
+x-php: &php
+  build:
+    context: ./docker/php
+  working_dir: /var/www/html
+  volumes:
+    - ./backend:/var/www/html
+    - ./backend-overlay:/overlay:ro
+    - ./scripts:/scripts:ro
+  env_file:
+    - ./.env
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_started
+
+services:
+  app:
+    <<: *php
+    command: php-fpm
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${APP_PORT:-8080}:80"
+    volumes:
+      - ./backend:/var/www/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+
+  worker:
+    <<: *php
+    command: php artisan queue:work --tries=3 --timeout=90
+
+  scheduler:
+    <<: *php
+    command: php artisan schedule:work
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:

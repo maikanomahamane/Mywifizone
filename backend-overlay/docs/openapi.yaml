@@ -1,0 +1,2497 @@
+openapi: 3.0.3
+info:
+  title: MY WIFIZONE API
+  version: 0.8.0
+  description: |
+    API REST versionnée de MY WIFIZONE (Phases 1 à 7 : authentification, multi-tenant, RBAC, abonnements,
+    facturation, paiements, Super Admin, réseau WiFi : routeurs, profils, vouchers, sessions, API de l'agent, ventes, caisse, rapports, agents, documents PDF/QR/CSV, personnalisation, devises et taux indicatifs).
+
+    **Enveloppe** : toute réponse est `{ success, data, meta, errors }`. `errors[].code` est une clé stable que
+    l'interface traduit (fr/en/ar/ha) ; `errors[].message` est technique.
+
+    **Montants** : entiers en unités mineures de la devise (XOF n'a pas de décimales : 5000 = 5 000 FCFA). Jamais de décimaux.
+
+    **Multi-tenant** : le tenant est celui de l'utilisateur authentifié. Aucun en-tête ni paramètre ne permet de le changer.
+    Une ressource d'un autre tenant répond `404`.
+
+    **Fournisseurs de paiement** : seul `mock` (fictif, dev/tests) est branché. Wave, Nita, Airtel Money et carte sont des
+    adaptateurs non branchés : ils répondent `provider_unavailable` tant que la documentation officielle et les identifiants manquent.
+  license:
+    name: Propriétaire
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Tenant
+  - name: Sites
+  - name: Abonnement
+  - name: Paiements
+  - name: Réseau
+  - name: Tickets
+  - name: Ventes
+  - name: Caisse
+  - name: Rapports
+  - name: Agents
+  - name: Documents
+  - name: International
+  - name: Portail
+  - name: Agent
+  - name: Admin
+  - name: Exploitation
+
+paths:
+  /health:
+    get:
+      tags: [Auth]
+      summary: État de l'API
+      security: []
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /health/ready:
+    get:
+      tags: [Exploitation]
+      summary: 'Sonde de disponibilité (base de données, cache). Publique, sans détail ni version. 503 si un composant est en échec.'
+      security: []
+      responses:
+        '200': {description: Prêt, content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '503': {description: Dégradé, content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /internal/metrics:
+    get:
+      tags: [Exploitation]
+      summary: 'Métriques Prometheus (agrégats sans identifiant). Jeton d''exploitation `METRICS_TOKEN` en Bearer ; 404 si le jeton n''est pas configuré.'
+      security: []
+      responses:
+        '200': {description: 'Texte Prometheus 0.0.4', content: {text/plain: {schema: {type: string}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /plans:
+    get:
+      tags: [Abonnement]
+      summary: Catalogue public des formules actives
+      description: Prix et limites lus en base (modifiables par le Super Admin), jamais codés en dur.
+      security: []
+      responses:
+        '200': {description: Formules, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/Plan'}}}}]}}}}
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Inscription (crée le tenant, le propriétaire et démarre l'essai gratuit)
+      description: L'essai dure 14 jours par défaut (surchargeable par formule), prolongeable par un code TRIAL_EXTENSION.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, business_name, password]
+              description: "`email` ou `phone` est obligatoire."
+              properties:
+                name: {type: string, maxLength: 120}
+                business_name: {type: string, maxLength: 120}
+                email: {type: string, format: email, nullable: true}
+                phone: {type: string, nullable: true, example: '+22790123456', description: 'Normalisé (chiffres et + initial), 8 à 15 chiffres.'}
+                password: {type: string, minLength: 8, maxLength: 128}
+                locale: {type: string, enum: [fr, en, ar, ha]}
+                device_name: {type: string, maxLength: 100}
+                plan_code: {type: string, example: STARTER, description: 'Formule d''essai (défaut : STARTER).'}
+                promo_code: {type: string, description: 'Code de type TRIAL_EXTENSION uniquement.'}
+      responses:
+        '201': {description: Compte créé, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/AuthResult'}}}]}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Connexion par e-mail ou téléphone
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier: {type: string, description: 'E-mail ou téléphone.'}
+                password: {type: string}
+                device_name: {type: string}
+      responses:
+        '200': {description: Connecté, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/AuthResult'}}}]}}}}
+        '401': {description: 'Identifiants invalides (`invalid_credentials`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '403': {description: 'Compte désactivé ou tenant suspendu (`account_disabled`, `tenant_suspended`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Renouvelle les jetons (rotation)
+      description: Le refresh token est à usage unique. Rejouer un jeton déjà consommé révoque toutes les sessions de l'utilisateur.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: {type: string}
+      responses:
+        '200': {description: Nouveaux jetons, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: object, properties: {tokens: {$ref: '#/components/schemas/Tokens'}}}}}]}}}}
+        '401': {description: 'Jeton invalide, expiré ou déjà consommé (`invalid_refresh_token`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Déconnexion (révoque l'access token et son refresh token)
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Profil, rôle, permissions et abonnement de l'utilisateur connecté
+      responses:
+        '200': {description: Profil, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: object, properties: {user: {$ref: '#/components/schemas/User'}}}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /tenants/me:
+    get:
+      tags: [Tenant]
+      summary: Organisation de l'utilisateur connecté
+      responses:
+        '200': {description: Tenant, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/TenantMe'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    put:
+      tags: [International]
+      summary: 'Réglages régionaux du tenant (propriétaire, abonnement actif). Changer la devise par défaut ne modifie AUCUN prix ni vente existant.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string, minLength: 2, maxLength: 120}
+                locale: {type: string, enum: [fr, en, ar, ha]}
+                currency: {type: string, minLength: 3, maxLength: 3, description: 'Code d''une devise active'}
+                country: {type: string, pattern: '^[A-Z]{2}$'}
+                timezone: {type: string, example: Africa/Niamey}
+      responses:
+        '200': {description: 'OK', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: object}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /sites:
+    get:
+      tags: [Sites]
+      summary: Liste des sites du tenant (permission `sites.view`)
+      parameters:
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Sites, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/Site'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Sites]
+      summary: Crée un site (permission `sites.manage`, abonnement actif, limite du plan)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SiteInput'}
+      responses:
+        '201': {description: Créé, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Site'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {description: 'Permission insuffisante ou limite du plan atteinte (`plan_limit_reached`, `meta.max`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /sites/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Sites]
+      summary: Détail d'un site
+      responses:
+        '200': {description: Site, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Site'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      tags: [Sites]
+      summary: Modifie un site (abonnement actif requis)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SiteInput'}
+      responses:
+        '200': {description: Site modifié, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Site'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+    delete:
+      tags: [Sites]
+      summary: Supprime un site (abonnement actif requis)
+      responses:
+        '200': {description: Supprimé, content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /subscription:
+    get:
+      tags: [Abonnement]
+      summary: Abonnement courant, formule et usage (permission `subscription.view`)
+      responses:
+        '200': {description: Abonnement, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: object, properties: {subscription: {$ref: '#/components/schemas/Subscription'}, plan: {$ref: '#/components/schemas/Plan'}, usage: {type: object, properties: {sites: {type: integer}}}}}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /subscription/providers:
+    get:
+      tags: [Abonnement]
+      summary: Moyens de paiement réellement utilisables (activés ET branchés)
+      parameters:
+        - {name: currency, in: query, schema: {type: string, default: XOF, minLength: 3, maxLength: 3}}
+      responses:
+        '200': {description: Fournisseurs utilisables, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {type: object, properties: {code: {type: string}, name: {type: string}}}}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /subscription/checkout:
+    post:
+      tags: [Abonnement]
+      summary: Crée une facture et lance le paiement (permission `subscription.manage`)
+      description: |
+        Idempotent via l'en-tête `Idempotency-Key` : rejouer la même requête renvoie la même transaction (`200`) sans
+        créer de nouvelle facture. La même clé avec une autre demande répond `409 idempotency_key_reused`.
+        Une facture entièrement remise par une promotion est soldée immédiatement (`payment: null`).
+      parameters:
+        - {name: Idempotency-Key, in: header, required: false, schema: {type: string, maxLength: 100, pattern: '^[A-Za-z0-9_\-:.]+$'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_code, billing_cycle, provider]
+              properties:
+                plan_code: {type: string, example: PRO}
+                billing_cycle: {type: string, enum: [MONTHLY, YEARLY]}
+                provider: {type: string, example: mock}
+                promo_code: {type: string, description: 'Code de remise (PERCENTAGE ou FIXED).'}
+                phone: {type: string, nullable: true, description: 'Numéro Mobile Money du payeur.'}
+      responses:
+        '200': {description: 'Rejeu idempotent', content: {application/json: {schema: {$ref: '#/components/schemas/CheckoutResponse'}}}}
+        '201': {description: Facture et paiement créés, content: {application/json: {schema: {$ref: '#/components/schemas/CheckoutResponse'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: 'Conflit (`idempotency_key_reused`, `idempotency_conflict`, `no_subscription`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {description: 'Données invalides, périodicité indisponible (`cycle_unavailable`) ou fournisseur indisponible (`provider_unavailable`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '503': {description: 'Fournisseur de paiement indisponible.', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /subscription/cancel:
+    post:
+      tags: [Abonnement]
+      summary: Résilie (immédiat pendant l'essai ou en attente ; à l'échéance si actif)
+      responses:
+        '200': {description: Abonnement mis à jour, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Subscription'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: 'Non résiliable (`subscription_not_cancellable`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /invoices:
+    get:
+      tags: [Abonnement]
+      summary: Historique des factures et reçus (permission `subscription.view`)
+      parameters:
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Factures, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/Invoice'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /invoices/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Abonnement]
+      summary: Détail d'une facture
+      responses:
+        '200': {description: Facture, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Invoice'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /payments/webhooks/{provider}:
+    post:
+      tags: [Paiements]
+      summary: Webhook d'un fournisseur de paiement
+      description: |
+        Non authentifié : protégé par la signature propre à chaque fournisseur, vérifiée sur le corps BRUT.
+        Idempotent par `(provider, event_id)`. Un succès dont le montant ou la devise diffère de la transaction
+        n'active jamais rien (`outcome: rejected`).
+
+        **Fournisseur `mock` (fictif)** : en-têtes `X-Mock-Timestamp` et `X-Mock-Signature`
+        (`sha256=` + HMAC-SHA256 de `{timestamp}.{corps}`), tolérance d'horloge 300 s.
+      security: []
+      parameters:
+        - {name: provider, in: path, required: true, schema: {type: string, pattern: '^[a-z_]{2,32}$'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event_id: {type: string}
+                type: {type: string, enum: [payment.succeeded, payment.failed]}
+                reference: {type: string}
+                amount: {type: integer, minimum: 0}
+                currency: {type: string}
+                reason: {type: string}
+      responses:
+        '200':
+          description: Webhook pris en compte
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          outcome: {type: string, enum: [processed, duplicate, rejected, ignored]}
+        '401': {description: 'Signature invalide ou horodatage périmé (`invalid_signature`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '404': {description: 'Fournisseur inconnu ou non branché (`provider_unavailable`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /admin/overview:
+    get:
+      tags: [Admin]
+      summary: Tableau de bord plateforme (permission `admin.platform.view`)
+      responses:
+        '200': {description: Indicateurs, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Overview'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /admin/plans:
+    get:
+      tags: [Admin]
+      summary: Toutes les formules, y compris inactives (permission `admin.plans.manage`)
+      responses:
+        '200': {description: Formules, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/PlanAdmin'}}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /admin/plans/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    put:
+      tags: [Admin]
+      summary: Modifie prix, limites, fonctionnalités, essai et grâce
+      description: Un changement ne touche que les futures factures. `limits` est fusionné clé par clé ; `null` = illimité.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                monthly_price: {type: integer, minimum: 0}
+                yearly_price: {type: integer, minimum: 0, nullable: true, description: 'null = pas de formule annuelle.'}
+                currency: {type: string, example: XOF}
+                trial_days: {type: integer, minimum: 0, maximum: 365, nullable: true, description: 'null = valeur par défaut (14 jours).'}
+                grace_days: {type: integer, minimum: 0, maximum: 60, nullable: true}
+                limits: {$ref: '#/components/schemas/PlanLimits'}
+                features: {type: array, items: {type: string}}
+                is_active: {type: boolean}
+      responses:
+        '200': {description: Formule modifiée, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/PlanAdmin'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /admin/promotions:
+    get:
+      tags: [Admin]
+      summary: Promotions
+      responses:
+        '200': {description: Promotions, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/Promotion'}}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Admin]
+      summary: Crée une promotion (PERCENTAGE, FIXED ou TRIAL_EXTENSION)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, type, value]
+              properties:
+                code: {type: string, description: 'Normalisé en majuscules.'}
+                type: {type: string, enum: [PERCENTAGE, FIXED, TRIAL_EXTENSION]}
+                value: {type: integer, minimum: 1, description: '% (≤ 100), unités mineures ou jours selon le type.'}
+                currency: {type: string, nullable: true, description: 'Obligatoire pour FIXED.'}
+                plan_code: {type: string, nullable: true}
+                starts_at: {type: string, format: date-time, nullable: true}
+                ends_at: {type: string, format: date-time, nullable: true}
+                max_redemptions: {type: integer, minimum: 1, nullable: true}
+                is_active: {type: boolean}
+      responses:
+        '201': {description: Créée, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Promotion'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /admin/promotions/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    put:
+      tags: [Admin]
+      summary: Modifie une promotion (le type et le code sont immuables)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                value: {type: integer, minimum: 1}
+                plan_code: {type: string, nullable: true}
+                starts_at: {type: string, format: date-time, nullable: true}
+                ends_at: {type: string, format: date-time, nullable: true}
+                max_redemptions: {type: integer, minimum: 1, nullable: true}
+                is_active: {type: boolean}
+      responses:
+        '200': {description: Modifiée, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Promotion'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /admin/payment-providers:
+    get:
+      tags: [Admin]
+      summary: Fournisseurs de paiement (permission `admin.providers.manage`)
+      responses:
+        '200': {description: Fournisseurs, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/PaymentProvider'}}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /admin/payment-providers/{code}:
+    parameters:
+      - {name: code, in: path, required: true, schema: {type: string, pattern: '^[a-z_]{2,32}$'}}
+    put:
+      tags: [Admin]
+      summary: Active/désactive un fournisseur et règle pays et devises
+      description: Activer un fournisseur ne le rend pas utilisable tant que `credentials_configured` est faux.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: {type: boolean}
+                countries: {type: array, nullable: true, items: {type: string, minLength: 2, maxLength: 2}}
+                currencies: {type: array, nullable: true, items: {type: string, minLength: 3, maxLength: 3}}
+      responses:
+        '200': {description: Fournisseur modifié, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/PaymentProvider'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /admin/tenants:
+    get:
+      tags: [Admin]
+      summary: Liste des tenants (permission `admin.tenants.manage`)
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [ACTIVE, SUSPENDED]}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Tenants, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/AdminTenant'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /admin/tenants/{id}/suspend:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Admin]
+      summary: Suspend un tenant (idempotent)
+      description: Bloque connexion et jetons existants ; l'abonnement passe à SUSPENDED.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: {type: string, maxLength: 255}
+      responses:
+        '200': {description: Tenant suspendu, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/AdminTenant'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /admin/tenants/{id}/reactivate:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Admin]
+      summary: Réactive un tenant (idempotent)
+      description: Le statut de l'abonnement est recalculé d'après ses dates ; le temps passé suspendu compte (hypothèse à valider).
+      responses:
+        '200': {description: Tenant réactivé, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/AdminTenant'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /admin/payments:
+    get:
+      tags: [Admin]
+      summary: Paiements de tous les tenants (lecture seule, permission `admin.payments.view`)
+      parameters:
+        - {name: status, in: query, schema: {type: string}}
+        - {name: provider, in: query, schema: {type: string}}
+        - {name: tenant_id, in: query, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Paiements, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/AdminPayment'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /admin/audit-logs:
+    get:
+      tags: [Admin]
+      summary: Journal d'audit (append-only, permission `admin.audit.view`)
+      parameters:
+        - {name: action, in: query, schema: {type: string}}
+        - {name: tenant_id, in: query, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Entrées d'audit, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/AuditLog'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /agent/enroll:
+    post:
+      tags: [Agent]
+      summary: 'Échange le code d''enrôlement contre le jeton de l''agent (usage unique, non authentifié)'
+      description: 'Appelé par l''agent installé près du routeur. Code inconnu, expiré ou déjà utilisé : `invalid_enrollment_code` (422). Limité à 10/min par IP.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentEnrollInput'}
+      responses:
+        '201': {description: Jeton émis (affiché une seule fois), content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/AgentEnrollment'}}}]}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /agent/heartbeat:
+    post:
+      tags: [Agent]
+      summary: 'Signal de vie, santé et sessions actives (jeton d''agent)'
+      security: [{agentToken: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentHeartbeat'}
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /agent/poll:
+    post:
+      tags: [Agent]
+      summary: 'Remet à l''agent les commandes à exécuter (bail de 60 s)'
+      security: [{agentToken: []}]
+      responses:
+        '200': {description: Commandes, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/AgentCommand'}}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /agent/commands/{id}/result:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Agent]
+      summary: 'Résultat d''une commande (idempotent)'
+      description: 'Contrat par type : CREATE_VOUCHER `{created: [code], failed: [{code, error}]}` ; FETCH_SESSIONS `{sessions, finished_codes}` ; FETCH_HEALTH `{health}`.'
+      security: [{agentToken: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentCommandResult'}
+      responses:
+        '200': {description: Résultat pris en compte, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/AgentResultAck'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /routers:
+    get:
+      tags: [Réseau]
+      summary: 'Liste des routeurs (permission `routers.view`)'
+      parameters:
+        - {name: site_id, in: query, schema: {type: string, format: uuid}}
+        - {name: status, in: query, schema: {type: string, enum: [PENDING, ONLINE, OFFLINE]}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Routeurs, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/Router'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Réseau]
+      summary: 'Crée un routeur et son code d''enrôlement (`routers.manage`, abonnement actif, limite `max_routers`)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RouterInput'}
+      responses:
+        '201': {description: Créé (le code d'enrôlement n'est affiché qu'ici), content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/RouterCreated'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /routers/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Réseau]
+      summary: 'Détail d''un routeur'
+      responses:
+        '200': {description: Routeur, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Router'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      tags: [Réseau]
+      summary: 'Modifie un routeur'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RouterUpdate'}
+      responses:
+        '200': {description: Routeur, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Router'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+    delete:
+      tags: [Réseau]
+      summary: 'Supprime un routeur'
+      responses:
+        '200': {description: Supprimé, content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /routers/{id}/rotate-agent-token:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Réseau]
+      summary: 'Invalide le jeton de l''agent et émet un nouveau code d''enrôlement'
+      responses:
+        '200': {description: Nouveau code, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/RouterCreated'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /routers/{id}/sync:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Réseau]
+      summary: 'Resynchronise profils, santé, sessions et vouchers en échec (mise en file)'
+      responses:
+        '202': {description: Commandes mises en file, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/SyncResult'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: 'Conflit (`router_not_enrolled`, `profile_in_use`, `voucher_not_revocable`, `connector_unavailable`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /routers/{id}/commands:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Réseau]
+      summary: 'File de commandes du routeur (diagnostic)'
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [PENDING, LEASED, SUCCEEDED, FAILED]}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Commandes, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/RouterCommand'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /routers/{id}/sessions/refresh:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Réseau]
+      summary: 'Demande un relevé immédiat des sessions (202)'
+      responses:
+        '202': {description: Commande en file, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/RouterCommand'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /access-points:
+    get:
+      tags: [Réseau]
+      summary: 'Liste des points d''accès'
+      parameters:
+        - {name: router_id, in: query, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Points d'accès, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/AccessPoint'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Réseau]
+      summary: 'Crée un point d''accès (limite `max_access_points`)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccessPointInput'}
+      responses:
+        '201': {description: Créé, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/AccessPoint'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /access-points/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Réseau]
+      summary: 'Détail'
+      responses:
+        '200': {description: Point d'accès, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/AccessPoint'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      tags: [Réseau]
+      summary: 'Modifie'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccessPointUpdate'}
+      responses:
+        '200': {description: Point d'accès, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/AccessPoint'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+    delete:
+      tags: [Réseau]
+      summary: 'Supprime'
+      responses:
+        '200': {description: Supprimé, content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /profiles:
+    get:
+      tags: [Tickets]
+      summary: 'Liste des profils HotSpot (STANDARD et VIP)'
+      parameters:
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Profils, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/HotspotProfile'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Tickets]
+      summary: 'Crée un profil (VIP : fonctionnalité `vip` du plan)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/HotspotProfileInput'}
+      responses:
+        '201': {description: Créé, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/HotspotProfile'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /profiles/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Tickets]
+      summary: 'Détail d''un profil'
+      responses:
+        '200': {description: Profil, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/HotspotProfile'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      tags: [Tickets]
+      summary: 'Modifie un profil (n''affecte pas les vouchers déjà générés)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/HotspotProfileUpdate'}
+      responses:
+        '200': {description: Profil, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/HotspotProfile'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+    delete:
+      tags: [Tickets]
+      summary: 'Supprime un profil sans voucher (sinon `profile_in_use`, 409)'
+      responses:
+        '200': {description: Supprimé, content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: 'Conflit (`router_not_enrolled`, `profile_in_use`, `voucher_not_revocable`, `connector_unavailable`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /voucher-batches:
+    get:
+      tags: [Tickets]
+      summary: 'Liste des lots'
+      parameters:
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Lots, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/VoucherBatch'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Tickets]
+      summary: 'Génère un lot de vouchers (202 : utilisables après confirmation du routeur)'
+      description: 'Taille maximale selon la formule (`max_batch_size`). Routeur non enrôlé : `router_not_enrolled` (409).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/VoucherBatchInput'}
+      responses:
+        '202': {description: Lot en cours de synchronisation, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/VoucherBatch'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: 'Conflit (`router_not_enrolled`, `profile_in_use`, `voucher_not_revocable`, `connector_unavailable`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /voucher-batches/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Tickets]
+      summary: 'Détail d''un lot avec le décompte par statut'
+      responses:
+        '200': {description: Lot, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/VoucherBatch'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /vouchers:
+    get:
+      tags: [Tickets]
+      summary: 'Liste des vouchers'
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [GENERATED, AVAILABLE, SOLD, ACTIVE, USED, EXPIRED, REVOKED, VIP]}}
+        - {name: sync_status, in: query, schema: {type: string, enum: [PENDING, SYNCED, FAILED]}}
+        - {name: router_id, in: query, schema: {type: string, format: uuid}}
+        - {name: site_id, in: query, schema: {type: string, format: uuid}}
+        - {name: batch_id, in: query, schema: {type: string, format: uuid}}
+        - {name: profile_id, in: query, schema: {type: string, format: uuid}}
+        - {name: is_vip, in: query, schema: {type: boolean}}
+        - {name: q, in: query, description: Préfixe du code, schema: {type: string, maxLength: 12}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Vouchers, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/Voucher'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /vouchers/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Tickets]
+      summary: 'Détail d''un voucher'
+      responses:
+        '200': {description: Voucher, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Voucher'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /vouchers/{id}/revoke:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Tickets]
+      summary: 'Révoque un voucher (idempotent ; refusé s''il est déjà épuisé/expiré : `voucher_not_revocable`)'
+      responses:
+        '200': {description: Voucher révoqué, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Voucher'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: 'Conflit (`router_not_enrolled`, `profile_in_use`, `voucher_not_revocable`, `connector_unavailable`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /sessions:
+    get:
+      tags: [Réseau]
+      summary: 'Sessions HotSpot (actives par défaut)'
+      parameters:
+        - {name: router_id, in: query, schema: {type: string, format: uuid}}
+        - {name: active, in: query, schema: {type: boolean, default: true}}
+        - {name: username, in: query, schema: {type: string, maxLength: 12}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Sessions, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/HotspotSession'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /sessions/{id}/disconnect:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Réseau]
+      summary: 'Déconnecte un client (202 : exécuté par l''agent au prochain cycle)'
+      responses:
+        '202': {description: Commande en file, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/RouterCommand'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /network-events:
+    get:
+      tags: [Réseau]
+      summary: 'Journal des événements réseau (lecture seule)'
+      parameters:
+        - {name: router_id, in: query, schema: {type: string, format: uuid}}
+        - {name: severity, in: query, schema: {type: string, enum: [INFO, WARNING, ERROR]}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: Événements, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/NetworkEvent'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /dashboard:
+    get:
+      tags: [Ventes]
+      summary: 'Tableau de bord : réseau, clients connectés, tickets, recettes du jour (propres à l''agent s''il n''a pas `sales.view_all`), caisse'
+      responses:
+        '200': {description: 'Tableau de bord', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Dashboard'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /sales:
+    get:
+      tags: [Ventes]
+      summary: 'Liste des ventes (un agent ne voit que les siennes)'
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [COMPLETED, VOIDED]}}
+        - {name: agent_id, in: query, schema: {type: string, format: uuid}}
+        - {name: site_id, in: query, schema: {type: string, format: uuid}}
+        - {name: profile_id, in: query, schema: {type: string, format: uuid}}
+        - {name: payment_method, in: query, schema: {type: string, enum: [CASH, MOBILE_MONEY, BANK, OTHER]}}
+        - {name: currency, in: query, schema: {type: string, minLength: 3, maxLength: 3}}
+        - {name: from, in: query, description: 'Jour local du tenant (inclus)', schema: {type: string, format: date}}
+        - {name: to, in: query, schema: {type: string, format: date}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: 'Ventes', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/Sale'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+    post:
+      tags: [Ventes]
+      summary: 'Vend un voucher du stock (voucher précis, ou un voucher AVAILABLE d''un profil sur un routeur). Rejouable via `client_ref` : le rejeu renvoie la vente d''origine (200).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payment_method]
+              properties:
+                voucher_id: {type: string, format: uuid}
+                router_id: {type: string, format: uuid, description: 'Requis sans voucher_id'}
+                profile_id: {type: string, format: uuid, description: 'Requis sans voucher_id'}
+                payment_method: {type: string, enum: [CASH, MOBILE_MONEY, BANK, OTHER]}
+                provider_transaction_id: {type: string, maxLength: 100, description: 'Référence saisie par le vendeur, NON vérifiée auprès d''un opérateur'}
+                client_ref: {type: string, maxLength: 64, description: 'Clé d''idempotence côté application'}
+      responses:
+        '201': {description: 'Vente créée (le code du voucher est renvoyé ici)', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Sale'}}}]}}}}
+        '200': {description: 'Rejeu : vente déjà enregistrée', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Sale'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: '`no_voucher_available`, `voucher_not_sellable`, `cash_session_required`, `duplicate_reference`.', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /sales/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Ventes]
+      summary: 'Détail d''une vente'
+      responses:
+        '200': {description: 'Vente', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Sale'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /sales/{id}/void:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Ventes]
+      summary: 'Annule une vente (idempotent). Espèces : écriture inverse en caisse. Révoque le voucher sauf `revoke_voucher=false`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string, minLength: 3, maxLength: 255}
+                revoke_voucher: {type: boolean, default: true}
+      responses:
+        '200': {description: 'Vente annulée', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Sale'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: '`cash_session_required`.', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /cash-registers:
+    get:
+      tags: [Caisse]
+      summary: 'Liste des caisses'
+      parameters:
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: 'Caisses', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/CashRegister'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+    post:
+      tags: [Caisse]
+      summary: 'Crée une caisse (fonction `cash` de la formule)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, currency]
+              properties:
+                name: {type: string, maxLength: 120}
+                currency: {type: string, example: XOF}
+                site_id: {type: string, format: uuid, nullable: true}
+      responses:
+        '201': {description: 'Caisse créée', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/CashRegister'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /cash-registers/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    put:
+      tags: [Caisse]
+      summary: 'Modifie une caisse (la devise ne change pas)'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              required: []
+              properties:
+                name: {type: string, maxLength: 120}
+                is_active: {type: boolean}
+                site_id: {type: string, format: uuid, nullable: true}
+      responses:
+        '200': {description: 'Caisse modifiée', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/CashRegister'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /cash-sessions:
+    get:
+      tags: [Caisse]
+      summary: 'Sessions de caisse (un caissier ne voit que les siennes)'
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [OPEN, CLOSED]}}
+        - {name: cash_register_id, in: query, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: 'Sessions', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/CashSession'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+    post:
+      tags: [Caisse]
+      summary: 'Ouvre une session (une seule ouverte par caisse et par utilisateur)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cash_register_id, opening_balance]
+              properties:
+                cash_register_id: {type: string, format: uuid}
+                opening_balance: {type: integer, minimum: 0}
+                note: {type: string, maxLength: 255}
+      responses:
+        '201': {description: 'Session ouverte', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/CashSession'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: '`cash_session_already_open`, `cash_register_inactive`.', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /cash-sessions/current:
+    get:
+      tags: [Caisse]
+      summary: 'Ma session ouverte (`data` = null s''il n''y en a pas)'
+      responses:
+        '200': {description: 'Session ou null', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {allOf: [{$ref: '#/components/schemas/CashSession'}], nullable: true}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /cash-sessions/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Caisse]
+      summary: 'Détail d''une session'
+      responses:
+        '200': {description: 'Session', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/CashSession'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /cash-sessions/{id}/transactions:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Caisse]
+      summary: 'Journal de la session (append-only)'
+      parameters:
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: 'Écritures', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/CashTransaction'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+    post:
+      tags: [Caisse]
+      summary: 'Écriture manuelle : CASH_IN, EXPENSE, WITHDRAWAL (montant positif) ou ADJUSTMENT (signé). Sortie refusée si le solde deviendrait négatif.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, amount]
+              properties:
+                type: {type: string, enum: [CASH_IN, EXPENSE, WITHDRAWAL, ADJUSTMENT]}
+                amount: {type: integer, description: 'Positif ; signé pour ADJUSTMENT ; jamais 0'}
+                note: {type: string, maxLength: 255}
+      responses:
+        '201': {description: 'Écriture créée', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/CashTransaction'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: '`cash_session_closed`.', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /cash-sessions/{id}/close:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Caisse]
+      summary: 'Clôture : enregistre solde attendu, solde compté et écart'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [counted_balance]
+              properties:
+                counted_balance: {type: integer, minimum: 0}
+                note: {type: string, maxLength: 255}
+      responses:
+        '200': {description: 'Session clôturée', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/CashSession'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: '`cash_session_closed`.', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /reports/sales:
+    get:
+      tags: [Rapports]
+      summary: 'Rapport de ventes (ventes annulées exclues ; totaux par devise, jamais additionnés entre devises). Journalier : `basic_stats` ; hebdo/mensuel/annuel : `reports`.'
+      parameters:
+        - {name: period, in: query, required: true, schema: {type: string, enum: [daily, weekly, monthly, annual]}}
+        - {name: from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: to, in: query, required: true, schema: {type: string, format: date}}
+        - {name: site_id, in: query, schema: {type: string, format: uuid}}
+        - {name: agent_id, in: query, schema: {type: string, format: uuid}}
+        - {name: profile_id, in: query, schema: {type: string, format: uuid}}
+        - {name: currency, in: query, schema: {type: string, minLength: 3, maxLength: 3}}
+        - {name: payment_method, in: query, schema: {type: string, enum: [CASH, MOBILE_MONEY, BANK, OTHER]}}
+        - {name: group_by, in: query, schema: {type: string, enum: [none, site, agent, profile, payment_method], default: none}}
+      responses:
+        '200': {description: 'Rapport', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/SalesReport'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /agents:
+    get:
+      tags: [Agents]
+      summary: 'Agents du tenant'
+      parameters:
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: 'Agents', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/StaffMember'}}, meta: {$ref: '#/components/schemas/Pagination'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+    post:
+      tags: [Agents]
+      summary: 'Crée un agent (limite `max_agents` de la formule)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, password]
+              properties:
+                name: {type: string, maxLength: 120}
+                email: {type: string, format: email, description: 'Requis sans phone'}
+                phone: {type: string, description: 'Requis sans email'}
+                password: {type: string, minLength: 8}
+                locale: {type: string, enum: [fr, en, ar, ha]}
+      responses:
+        '201': {description: 'Agent créé', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/StaffMember'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /agents/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      tags: [Agents]
+      summary: 'Détail d''un agent'
+      responses:
+        '200': {description: 'Agent', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/StaffMember'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+    put:
+      tags: [Agents]
+      summary: 'Modifie un agent. Désactiver ou changer le mot de passe coupe toutes ses sessions.'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              required: []
+              properties:
+                name: {type: string}
+                locale: {type: string, enum: [fr, en, ar, ha]}
+                status: {type: string, enum: [ACTIVE, DISABLED]}
+                password: {type: string, minLength: 8}
+      responses:
+        '200': {description: 'Agent modifié', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/StaffMember'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /tickets/pdf:
+    post:
+      tags: [Documents]
+      summary: 'Génère un PDF de tickets (permission tickets.export). Sélection : exactement une parmi batch_id, voucher_ids, router_id+profile_id. Seuls les vouchers AVAILABLE/VIP/SOLD synchronisés sont imprimables.'
+      description: 'QR : fonctionnalité `qr` (PRO/BUSINESS). Par défaut inclus si la formule le permet ; `include_qr: true` sans la fonctionnalité répond 403 `feature_unavailable`. Le QR ne contient jamais de secret serveur. Erreurs : `no_printable_tickets`, `too_many_tickets` (meta.max, meta.selected), `pdf_engine_unavailable` (503).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format]
+              properties:
+                format: {type: string, enum: [a4, a5, individual, thermal]}
+                thermal_width: {type: integer, enum: [58, 80], default: 58}
+                locale: {type: string, enum: [fr, en, ar, ha]}
+                include_qr: {type: boolean}
+                batch_id: {type: string, format: uuid}
+                voucher_ids: {type: array, maxItems: 500, items: {type: string, format: uuid}}
+                router_id: {type: string, format: uuid}
+                profile_id: {type: string, format: uuid}
+      responses:
+        '200':
+          description: 'Fichier PDF (en-tête X-Tickets-Count)'
+          content: {application/pdf: {schema: {type: string, format: binary}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {description: 'Moteur PDF indisponible (`pdf_engine_unavailable`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /sales/{id}/receipt:
+    get:
+      tags: [Documents]
+      summary: 'Reçu PDF d''une vente (code du ticket masqué). Les ventes annulées portent la mention ANNULÉ.'
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - {name: format, in: query, schema: {type: string, enum: [a4, a5, thermal], default: thermal}}
+        - {name: thermal_width, in: query, schema: {type: integer, enum: [58, 80]}}
+        - {name: locale, in: query, schema: {type: string, enum: [fr, en, ar, ha]}}
+      responses:
+        '200': {description: 'Fichier PDF', content: {application/pdf: {schema: {type: string, format: binary}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /invoices/{id}/pdf:
+    get:
+      tags: [Documents]
+      summary: 'Facture d''abonnement en PDF (propriétaire ; sans mentions fiscales)'
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - {name: locale, in: query, schema: {type: string, enum: [fr, en, ar, ha]}}
+      responses:
+        '200': {description: 'Fichier PDF', content: {application/pdf: {schema: {type: string, format: binary}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /exports/sales.csv:
+    get:
+      tags: [Documents]
+      summary: 'Export CSV des ventes (fonctionnalité `reports`, permission reports.view). Séparateur `;`, UTF-8 avec BOM, montants en unités mineures, cellules texte neutralisées contre l''injection de formules.'
+      parameters:
+        - {name: from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: to, in: query, required: true, description: 'Plage maximale 366 jours', schema: {type: string, format: date}}
+        - {name: payment_method, in: query, schema: {type: string, enum: [CASH, MOBILE_MONEY, BANK, OTHER]}}
+        - {name: include_voided, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200': {description: 'Fichier CSV', content: {text/csv: {schema: {type: string}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /branding:
+    get:
+      tags: [Documents]
+      summary: 'Personnalisation des tickets et reçus du tenant'
+      responses:
+        '200': {description: 'Personnalisation', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Branding'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    put:
+      tags: [Documents]
+      summary: 'Met à jour la personnalisation (propriétaire, abonnement actif)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: {type: string, maxLength: 80, nullable: true}
+                phone: {type: string, maxLength: 30, nullable: true}
+                slogan: {type: string, maxLength: 120, nullable: true}
+                terms: {type: string, maxLength: 600, nullable: true}
+                primary_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$', nullable: true}
+                portal_url: {type: string, maxLength: 200, nullable: true, description: 'http(s) uniquement ; jamais appelée par le serveur'}
+      responses:
+        '200': {description: 'Personnalisation mise à jour', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Branding'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /branding/logo:
+    get:
+      tags: [Documents]
+      summary: 'Logo (PNG ré-encodé)'
+      responses:
+        '200': {description: 'Image PNG', content: {image/png: {schema: {type: string, format: binary}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      tags: [Documents]
+      summary: 'Téléverse le logo : PNG/JPEG ≤ 512 Kio, 16–4000 px ; décodé puis ré-encodé en PNG ≤ 512 px (métadonnées et données ajoutées supprimées). Erreurs : logo_too_large, logo_invalid, logo_unsupported_type, logo_dimensions.'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [logo]
+              properties:
+                logo: {type: string, format: binary}
+      responses:
+        '200': {description: 'Personnalisation mise à jour', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Branding'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+    delete:
+      tags: [Documents]
+      summary: 'Supprime le logo'
+      responses:
+        '200': {description: 'Personnalisation mise à jour', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Branding'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /currencies:
+    get:
+      tags: [International]
+      summary: 'Devises actives (XOF, XAF, NGN, GHS, KES, USD, EUR, GBP au départ ; extensible) avec unité mineure et symbole'
+      responses:
+        '200': {description: 'Devises', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/Currency'}}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /currencies/convert:
+    get:
+      tags: [International]
+      summary: 'Équivalent INDICATIF d''un montant (fonction `multi_currency`). Ne modifie rien. Erreurs : rate_unavailable, currency_unavailable, rate_overflow.'
+      parameters:
+        - {name: amount, in: query, required: true, description: 'Unités mineures de la devise source', schema: {type: integer, minimum: 0, maximum: 999999999999}}
+        - {name: from, in: query, required: true, schema: {type: string, minLength: 3, maxLength: 3}}
+        - {name: to, in: query, required: true, schema: {type: string, minLength: 3, maxLength: 3}}
+      responses:
+        '200': {description: 'Conversion indicative', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Conversion'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /exchange-rates:
+    get:
+      tags: [International]
+      summary: 'Taux du tenant + parités fixes (EUR/XOF/XAF), propriétaire, fonction `multi_currency`'
+      responses:
+        '200': {description: 'Taux', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {type: array, items: {$ref: '#/components/schemas/ExchangeRate'}}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    put:
+      tags: [International]
+      summary: 'Crée ou remplace un taux manuel (sens unique : saisir aussi le sens inverse si besoin). Parités fixes non modifiables (`peg_rate_fixed`).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to, rate]
+              properties:
+                from: {type: string, minLength: 3, maxLength: 3}
+                to: {type: string, minLength: 3, maxLength: 3}
+                rate: {type: string, example: '610.5', description: 'Décimal positif, 7 chiffres entiers et 8 décimales maximum'}
+      responses:
+        '200': {description: 'Taux enregistré', content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/ExchangeRate'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /exchange-rates/{id}:
+    delete:
+      tags: [International]
+      summary: 'Supprime un taux manuel'
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': {description: 'Supprimé', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /portal/orders/{token}:
+    get:
+      tags: [Portail]
+      security: []
+      summary: 'PUBLIC. Statut d''une commande par son jeton secret. Le code n''est renvoyé que livré (FULFILLED) et pendant PORTAL_CODE_REVEAL_HOURS.'
+      parameters:
+        - {name: token, in: path, required: true, schema: {type: string, pattern: '^[a-z0-9]{32}$'}}
+      responses:
+        '200': {description: 'Statut', content: {application/json: {schema: {$ref: '#/components/schemas/PortalOrderStatus'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /portal/{slug}:
+    get:
+      tags: [Portail]
+      security: []
+      summary: 'PUBLIC. Offres du portail (profils STANDARD payants visibles). Avec `router`, indique la disponibilité du stock.'
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string, pattern: '^[a-z0-9]{8,24}$'}}
+        - {name: router, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: 'Portail et offres', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {description: 'Portail indisponible (`portal_unavailable` : abonnement inactif ou formule sans portail).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /portal/{slug}/page:
+    get:
+      tags: [Portail]
+      security: []
+      summary: 'PUBLIC. Page HTML responsive du portail (CSP stricte, aucun secret). Paramètres de la redirection HotSpot : r (routeur), link-login-only, link-orig.'
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string, pattern: '^[a-z0-9]{8,24}$'}}
+        - {name: lang, in: query, schema: {type: string, enum: [fr, en, ar, ha]}}
+      responses:
+        '200': {description: 'Page HTML', content: {text/html: {schema: {type: string}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {description: 'Portail indisponible', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /portal/{slug}/logo:
+    get:
+      tags: [Portail]
+      security: []
+      summary: 'PUBLIC. Logo du propriétaire (PNG ré-encodé)'
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string, pattern: '^[a-z0-9]{8,24}$'}}
+      responses:
+        '200': {description: 'Image PNG', content: {image/png: {schema: {type: string, format: binary}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /portal/{slug}/orders:
+    post:
+      tags: [Portail]
+      security: []
+      summary: 'PUBLIC. Crée une commande et lance le paiement (fournisseur mock uniquement tant qu''aucun adaptateur réel n''est branché). Le voucher n''est livré qu''après webhook signé et montant vérifié. Rejouable via client_ref. Erreurs : offer_unavailable, sold_out, provider_unavailable, portal_busy.'
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string, pattern: '^[a-z0-9]{8,24}$'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profile_id, router_id]
+              properties:
+                profile_id: {type: string, format: uuid}
+                router_id: {type: string, format: uuid}
+                locale: {type: string, enum: [fr, en, ar, ha]}
+                customer_phone: {type: string, pattern: '^\+?[0-9]{6,15}$'}
+                client_ref: {type: string, maxLength: 64, pattern: '^[A-Za-z0-9_.-]+$'}
+                provider: {type: string, pattern: '^[a-z_]{2,32}$'}
+      responses:
+        '201': {description: 'Commande créée', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: 'Plus de stock (`sold_out`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {description: 'Portail ou paiement indisponible', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+
+  /portal-settings:
+    get:
+      tags: [Portail]
+      summary: 'Réglages du portail (propriétaire)'
+      responses:
+        '200': {description: 'Réglages', content: {application/json: {schema: {$ref: '#/components/schemas/PortalSettings'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    put:
+      tags: [Portail]
+      summary: 'Active/désactive le portail (fonction `captive_portal`, PRO/BUSINESS) ou régénère son adresse publique (l''ancienne cesse de fonctionner)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: {type: boolean}
+                regenerate_slug: {type: boolean}
+      responses:
+        '200': {description: 'Réglages', content: {application/json: {schema: {$ref: '#/components/schemas/PortalSettings'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /portal-orders:
+    get:
+      tags: [Portail]
+      summary: 'Commandes d''achat direct (permission reports.view). Ni code ni jeton.'
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [PENDING_PAYMENT, FULFILLED, NEEDS_ATTENTION, FAILED, EXPIRED]}}
+        - {$ref: '#/components/parameters/PerPage'}
+        - {$ref: '#/components/parameters/Page'}
+      responses:
+        '200': {description: 'Commandes', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /external-links:
+    get:
+      tags: [Portail]
+      summary: 'Liens vers des services externes (ex. portail officiel Starlink)'
+      responses:
+        '200': {description: 'Liens', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    post:
+      tags: [Portail]
+      summary: 'Ajoute un lien (https uniquement, sans identifiants ; aucun mot de passe n''est jamais stocké)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url]
+              properties:
+                kind: {type: string, enum: [STARLINK, OTHER]}
+                name: {type: string, maxLength: 80}
+                url: {type: string, maxLength: 300, example: 'https://www.starlink.com/account'}
+                is_active: {type: boolean}
+      responses:
+        '201': {description: 'Lien créé', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+
+  /external-links/{id}:
+    put:
+      tags: [Portail]
+      summary: 'Modifie un lien'
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kind: {type: string, enum: [STARLINK, OTHER]}
+                name: {type: string, maxLength: 80}
+                url: {type: string, maxLength: 300}
+                is_active: {type: boolean}
+      responses:
+        '200': {description: 'Lien modifié', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+    delete:
+      tags: [Portail]
+      summary: 'Supprime un lien'
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': {description: 'Supprimé', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access token (15 min) obtenu via /auth/login ou /auth/register, renouvelé via /auth/refresh.
+    agentToken:
+      type: http
+      scheme: bearer
+      description: 'Jeton d''agent routeur (préfixe `wza_`), obtenu une seule fois via /agent/enroll. Limité à SON routeur.'
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    PerPage:
+      name: per_page
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+    Page:
+      name: page
+      in: query
+      schema: {type: integer, minimum: 1, default: 1}
+
+  responses:
+    Unauthorized:
+      description: Authentification requise ou jeton invalide (`unauthenticated`).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}
+    Forbidden:
+      description: 'Accès refusé (`forbidden`, `tenant_required`, `tenant_suspended`, `account_disabled`).'
+      content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}
+    NotFound:
+      description: Ressource introuvable, ou appartenant à un autre tenant (`not_found`).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}
+    ValidationError:
+      description: Données invalides (`validation_failed`, `errors[].field`).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}
+    RateLimited:
+      description: Trop de requêtes (`rate_limited`).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}
+    SubscriptionInactive:
+      description: 'Abonnement inactif : écritures refusées, lectures et paiement restent possibles (`subscription_inactive`, `meta.status`).'
+      content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}
+
+  schemas:
+    PortalSettings:
+      type: object
+      properties:
+        enabled: {type: boolean}
+        slug: {type: string, nullable: true, description: 'Identifiant public aléatoire (pas un secret d''authentification).'}
+        page_url: {type: string, nullable: true}
+        feature_available: {type: boolean}
+    PortalOrderStatus:
+      type: object
+      properties:
+        status: {type: string, enum: [PENDING_PAYMENT, FULFILLED, NEEDS_ATTENTION, FAILED, EXPIRED]}
+        reference: {type: string, description: 'Huit premiers caractères de la commande, à communiquer au point de vente si NEEDS_ATTENTION.'}
+        code: {type: string, nullable: true}
+    Currency:
+      type: object
+      properties:
+        code: {type: string, example: XOF}
+        name: {type: string}
+        minor_unit: {type: integer, example: 0}
+        symbol: {type: string, nullable: true}
+    Conversion:
+      type: object
+      properties:
+        amount: {type: integer, description: 'Unités mineures de la devise cible'}
+        currency: {type: string}
+        rate: {type: string, example: '655.957'}
+        source: {type: string, enum: [identity, peg, manual]}
+        indicative: {type: boolean, example: true}
+    ExchangeRate:
+      type: object
+      properties:
+        id: {type: string, format: uuid, nullable: true}
+        from: {type: string}
+        to: {type: string}
+        rate: {type: string}
+        source: {type: string, enum: [peg, manual]}
+        updated_at: {type: string, format: date-time, nullable: true}
+    Branding:
+      type: object
+      properties:
+        display_name: {type: string, nullable: true}
+        phone: {type: string, nullable: true}
+        slogan: {type: string, nullable: true}
+        terms: {type: string, nullable: true}
+        primary_color: {type: string, nullable: true, example: '#EF3340'}
+        portal_url: {type: string, nullable: true}
+        has_logo: {type: boolean}
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string, example: validation_failed}
+        message: {type: string}
+        field: {type: string}
+    Envelope:
+      type: object
+      required: [success, data, meta, errors]
+      properties:
+        success: {type: boolean}
+        data: {nullable: true}
+        meta: {type: object, additionalProperties: true}
+        errors: {type: array, items: {$ref: '#/components/schemas/ApiError'}}
+    Pagination:
+      type: object
+      properties:
+        page: {type: integer}
+        per_page: {type: integer}
+        total: {type: integer}
+    Tokens:
+      type: object
+      properties:
+        token_type: {type: string, example: Bearer}
+        access_token: {type: string}
+        access_expires_at: {type: string, format: date-time}
+        refresh_token: {type: string, description: 'Valeur opaque à usage unique.'}
+        refresh_expires_at: {type: string, format: date-time}
+    AuthResult:
+      type: object
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        tokens: {$ref: '#/components/schemas/Tokens'}
+    User:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        email: {type: string, nullable: true}
+        phone: {type: string, nullable: true}
+        locale: {type: string, enum: [fr, en, ar, ha]}
+        role: {type: string, enum: [SUPER_ADMIN, OWNER, AGENT]}
+        permissions: {type: array, items: {type: string}}
+        tenant:
+          type: object
+          nullable: true
+          properties:
+            id: {type: string, format: uuid}
+            name: {type: string}
+            status: {type: string, enum: [ACTIVE, SUSPENDED]}
+            currency: {type: string}
+        subscription:
+          allOf: [{$ref: '#/components/schemas/Subscription'}]
+          nullable: true
+    TenantMe:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        country: {type: string}
+        locale: {type: string}
+        currency: {type: string}
+        status: {type: string, enum: [ACTIVE, SUSPENDED]}
+    Site:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        address: {type: string, nullable: true}
+    SiteInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, maxLength: 120}
+        address: {type: string, maxLength: 255, nullable: true}
+    PlanLimits:
+      type: object
+      description: 'Valeur `null` = illimité. Clés inconnues refusées.'
+      properties:
+        max_sites: {type: integer, minimum: 0, nullable: true}
+        max_routers: {type: integer, minimum: 0, nullable: true}
+        max_access_points: {type: integer, minimum: 0, nullable: true}
+        max_agents: {type: integer, minimum: 0, nullable: true}
+        max_batch_size: {type: integer, minimum: 0, nullable: true, description: 'Taille maximale d''un lot de vouchers.'}
+    Plan:
+      type: object
+      properties:
+        code: {type: string, example: STARTER}
+        name: {type: string}
+        currency: {type: string, example: XOF}
+        monthly_price: {type: integer, example: 2000}
+        yearly_price: {type: integer, nullable: true}
+        trial_days: {type: integer, example: 14}
+        limits: {$ref: '#/components/schemas/PlanLimits'}
+        features: {type: array, items: {type: string}}
+    PlanAdmin:
+      allOf:
+        - $ref: '#/components/schemas/Plan'
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            is_active: {type: boolean}
+            grace_days: {type: integer}
+    Subscription:
+      type: object
+      properties:
+        status: {type: string, enum: [TRIAL, ACTIVE, PENDING, PAST_DUE, EXPIRED, SUSPENDED, CANCELLED]}
+        plan: {type: string, nullable: true}
+        billing_cycle: {type: string, enum: [MONTHLY, YEARLY], nullable: true}
+        trial_ends_at: {type: string, format: date-time, nullable: true}
+        current_period_start: {type: string, format: date-time, nullable: true}
+        current_period_end: {type: string, format: date-time, nullable: true}
+        grace_ends_at: {type: string, format: date-time, nullable: true}
+        cancel_at_period_end: {type: boolean}
+    Invoice:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        number: {type: string, example: INV-20261010-AB12CD}
+        status: {type: string, enum: [OPEN, PAID, VOID]}
+        plan: {type: string, nullable: true}
+        billing_cycle: {type: string, enum: [MONTHLY, YEARLY]}
+        currency: {type: string}
+        subtotal: {type: integer}
+        discount: {type: integer}
+        total: {type: integer}
+        period_start: {type: string, format: date-time, nullable: true}
+        period_end: {type: string, format: date-time, nullable: true}
+        paid_at: {type: string, format: date-time, nullable: true}
+        receipt_number: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+    Payment:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        provider: {type: string}
+        status: {type: string, enum: [INITIATED, PENDING, SUCCEEDED, FAILED, EXPIRED, CANCELLED, REFUNDED]}
+        reference: {type: string, nullable: true}
+        amount: {type: integer}
+        currency: {type: string}
+        instructions: {type: object, nullable: true, additionalProperties: true}
+        failure_reason: {type: string, nullable: true}
+    CheckoutResponse:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                invoice: {$ref: '#/components/schemas/Invoice'}
+                payment:
+                  allOf: [{$ref: '#/components/schemas/Payment'}]
+                  nullable: true
+    Promotion:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        code: {type: string}
+        type: {type: string, enum: [PERCENTAGE, FIXED, TRIAL_EXTENSION]}
+        value: {type: integer}
+        currency: {type: string, nullable: true}
+        plan_code: {type: string, nullable: true}
+        starts_at: {type: string, format: date-time, nullable: true}
+        ends_at: {type: string, format: date-time, nullable: true}
+        max_redemptions: {type: integer, nullable: true}
+        redemptions_count: {type: integer}
+        is_active: {type: boolean}
+    PaymentProvider:
+      type: object
+      properties:
+        code: {type: string}
+        name: {type: string}
+        enabled: {type: boolean}
+        countries: {type: array, nullable: true, items: {type: string}}
+        currencies: {type: array, nullable: true, items: {type: string}}
+        credentials_configured: {type: boolean, description: 'Faux pour un adaptateur non branché.'}
+        required_env: {type: array, items: {type: string}, description: 'Variables provisoires, à confirmer d''après la documentation officielle.'}
+    AdminTenant:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        country: {type: string}
+        status: {type: string, enum: [ACTIVE, SUSPENDED]}
+        created_at: {type: string, format: date-time}
+        subscription:
+          allOf: [{$ref: '#/components/schemas/Subscription'}]
+          nullable: true
+    AdminPayment:
+      allOf:
+        - $ref: '#/components/schemas/Payment'
+        - type: object
+          properties:
+            tenant_id: {type: string, format: uuid}
+            invoice_number: {type: string, nullable: true}
+            created_at: {type: string, format: date-time}
+    AuditLog:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        tenant_id: {type: string, format: uuid, nullable: true}
+        user_id: {type: string, format: uuid, nullable: true}
+        action: {type: string, example: subscription.activated}
+        subject_type: {type: string, nullable: true}
+        subject_id: {type: string, nullable: true}
+        ip: {type: string, nullable: true}
+        request_id: {type: string, nullable: true}
+        metadata: {type: object, nullable: true, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+    Overview:
+      type: object
+      properties:
+        tenants:
+          type: object
+          properties:
+            ACTIVE: {type: integer}
+            SUSPENDED: {type: integer}
+        users: {type: integer, description: 'Utilisateurs rattachés à un tenant.'}
+        subscriptions:
+          type: object
+          description: 'Nombre d''abonnements par statut.'
+          additionalProperties: {type: integer}
+        revenue:
+          type: array
+          description: 'CA SaaS encaissé (factures payées), une ligne par devise.'
+          items:
+            type: object
+            properties:
+              currency: {type: string}
+              invoices: {type: integer}
+              total: {type: integer}
+        payments_in_flight: {type: integer}
+        health:
+          type: object
+          properties:
+            database: {type: boolean}
+            cache: {type: boolean}
+
+    AgentEnrollInput:
+      type: object
+      required: [enrollment_code]
+      properties:
+        enrollment_code: {type: string, maxLength: 40, example: WZ-ABCDE-FGHJK-MNPQR-STUVW}
+        agent_version: {type: string, maxLength: 40}
+        routeros_version: {type: string, maxLength: 40}
+        model: {type: string, maxLength: 80}
+    AgentEnrollment:
+      type: object
+      properties:
+        router_id: {type: string, format: uuid}
+        agent_token: {type: string, description: 'Préfixe `wza_`. Affiché une seule fois ; à conserver sur le routeur uniquement.'}
+        hotspot_server: {type: string, nullable: true}
+        poll_interval: {type: integer, example: 10}
+        heartbeat_interval: {type: integer, example: 30}
+    AgentHeartbeat:
+      type: object
+      description: Tout est optionnel. Les clés inconnues sont ignorées.
+      properties:
+        health:
+          type: object
+          properties:
+            board_name: {type: string}
+            version: {type: string}
+            agent_version: {type: string}
+            cpu_load: {type: integer, minimum: 0, maximum: 100}
+            free_memory: {type: integer}
+            total_memory: {type: integer}
+            uptime_seconds: {type: integer}
+        sessions: {type: array, maxItems: 1000, items: {$ref: '#/components/schemas/AgentSession'}}
+        finished_codes: {type: array, maxItems: 500, items: {type: string}, description: 'Codes dont le quota est épuisé côté routeur.'}
+    AgentSession:
+      type: object
+      required: [id, username]
+      properties:
+        id: {type: string, description: Identifiant RouterOS de la session, example: '*1A'}
+        username: {type: string}
+        address: {type: string, format: ip}
+        mac: {type: string, example: 'AA:BB:CC:DD:EE:FF'}
+        uptime_seconds: {type: integer}
+        bytes_in: {type: integer}
+        bytes_out: {type: integer}
+    AgentCommand:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        type: {type: string, enum: [CREATE_VOUCHER, DISABLE_VOUCHER, REVOKE_VOUCHER, FETCH_SESSIONS, DISCONNECT_USER, FETCH_HEALTH, SYNC_PROFILES]}
+        payload: {type: object, description: 'Données (jamais du script) : l''agent doit les traiter comme des valeurs, en corps JSON vers RouterOS.'}
+        attempt: {type: integer}
+    AgentCommandResult:
+      type: object
+      required: [success]
+      properties:
+        success: {type: boolean}
+        result: {type: object, nullable: true}
+        error: {type: string, maxLength: 1000, nullable: true}
+        retryable: {type: boolean, default: true}
+    AgentResultAck:
+      type: object
+      properties:
+        status: {type: string, enum: [PENDING, LEASED, SUCCEEDED, FAILED]}
+        duplicate: {type: boolean}
+    Router:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        site_id: {type: string, format: uuid}
+        name: {type: string}
+        model: {type: string, nullable: true}
+        routeros_version: {type: string, nullable: true}
+        connection_mode: {type: string, enum: [AGENT]}
+        status: {type: string, enum: [PENDING, ONLINE, OFFLINE]}
+        hotspot_server: {type: string, nullable: true}
+        agent_enrolled: {type: boolean}
+        enrollment_pending: {type: boolean}
+        last_seen_at: {type: string, format: date-time, nullable: true}
+        health: {type: object, nullable: true}
+        clients_count: {type: integer}
+        created_at: {type: string, format: date-time}
+    RouterCreated:
+      allOf:
+        - $ref: '#/components/schemas/Router'
+        - type: object
+          properties:
+            enrollment:
+              type: object
+              properties:
+                code: {type: string, example: WZ-ABCDE-FGHJK-MNPQR-STUVW, description: 'Affiché une seule fois ; valable 24 h ; usage unique.'}
+                expires_at: {type: string, format: date-time}
+    RouterInput:
+      type: object
+      required: [site_id, name]
+      properties:
+        site_id: {type: string, format: uuid}
+        name: {type: string, maxLength: 120}
+        model: {type: string, maxLength: 80, nullable: true}
+        hotspot_server: {type: string, pattern: '^[A-Za-z0-9._-]{1,60}$'}
+    RouterUpdate:
+      type: object
+      properties:
+        name: {type: string, maxLength: 120}
+        model: {type: string, maxLength: 80, nullable: true}
+        hotspot_server: {type: string, pattern: '^[A-Za-z0-9._-]{1,60}$'}
+    SyncResult:
+      type: object
+      properties:
+        commands_queued: {type: integer}
+        vouchers_resent: {type: integer}
+    RouterCommand:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        router_id: {type: string, format: uuid}
+        type: {type: string}
+        status: {type: string, enum: [PENDING, LEASED, SUCCEEDED, FAILED]}
+        attempts: {type: integer}
+        max_attempts: {type: integer}
+        executed_at: {type: string, format: date-time, nullable: true}
+        error: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+    AccessPoint:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        router_id: {type: string, format: uuid}
+        name: {type: string}
+        model: {type: string, nullable: true}
+        location: {type: string, nullable: true}
+        status: {type: string, description: 'UNKNOWN tant que la supervision (Phase 8) n''existe pas.'}
+        clients_count: {type: integer}
+        last_seen_at: {type: string, format: date-time, nullable: true}
+    AccessPointInput:
+      type: object
+      required: [router_id, name]
+      properties:
+        router_id: {type: string, format: uuid}
+        name: {type: string, maxLength: 120}
+        model: {type: string, maxLength: 80, nullable: true}
+        location: {type: string, maxLength: 160, nullable: true}
+    AccessPointUpdate:
+      type: object
+      properties:
+        router_id: {type: string, format: uuid}
+        name: {type: string, maxLength: 120}
+        model: {type: string, maxLength: 80, nullable: true}
+        location: {type: string, maxLength: 160, nullable: true}
+    HotspotProfile:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        kind: {type: string, enum: [STANDARD, VIP]}
+        price: {type: integer, description: 'Unités mineures (XOF sans décimales).'}
+        currency: {type: string, example: XOF}
+        duration_minutes: {type: integer, nullable: true, description: 'Temps de connexion cumulé ; null = illimité.'}
+        rate_limit: {type: string, nullable: true, example: 2M/2M}
+        device_limit: {type: integer}
+        data_limit_mb: {type: integer, nullable: true}
+        is_active: {type: boolean}
+        portal_visible: {type: boolean, description: 'Proposé à l''achat direct du portail captif (profils STANDARD payants uniquement).'}
+    HotspotProfileInput:
+      type: object
+      required: [name, price, currency]
+      properties:
+        name: {type: string, maxLength: 80}
+        kind: {type: string, enum: [STANDARD, VIP]}
+        price: {type: integer, minimum: 0}
+        currency: {type: string, minLength: 3, maxLength: 3, example: XOF}
+        duration_minutes: {type: integer, minimum: 1, nullable: true}
+        rate_limit: {type: string, nullable: true, pattern: '^\d{1,6}[kKmMgG]?(/\d{1,6}[kKmMgG]?)?$', example: 2M/2M}
+        device_limit: {type: integer, minimum: 1, maximum: 20}
+        data_limit_mb: {type: integer, minimum: 1, nullable: true}
+        is_active: {type: boolean}
+        portal_visible: {type: boolean, description: 'Proposé à l''achat direct du portail captif (profils STANDARD payants uniquement).'}
+    HotspotProfileUpdate:
+      type: object
+      properties:
+        name: {type: string, maxLength: 80}
+        kind: {type: string, enum: [STANDARD, VIP]}
+        price: {type: integer, minimum: 0}
+        currency: {type: string, minLength: 3, maxLength: 3}
+        duration_minutes: {type: integer, minimum: 1, nullable: true}
+        rate_limit: {type: string, nullable: true}
+        device_limit: {type: integer, minimum: 1, maximum: 20}
+        data_limit_mb: {type: integer, minimum: 1, nullable: true}
+        is_active: {type: boolean}
+        portal_visible: {type: boolean, description: 'Proposé à l''achat direct du portail captif (profils STANDARD payants uniquement).'}
+    VoucherBatchInput:
+      type: object
+      required: [router_id, profile_id, quantity]
+      properties:
+        router_id: {type: string, format: uuid}
+        profile_id: {type: string, format: uuid}
+        quantity: {type: integer, minimum: 1, description: 'Plafonné par `max_batch_size` du plan.'}
+        label: {type: string, maxLength: 80, nullable: true}
+        valid_until: {type: string, format: date-time, nullable: true}
+        code_length: {type: integer, minimum: 6, maximum: 12, default: 8}
+    VoucherBatch:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        site_id: {type: string, format: uuid}
+        router_id: {type: string, format: uuid}
+        profile_id: {type: string, format: uuid}
+        label: {type: string, nullable: true}
+        quantity: {type: integer}
+        valid_until: {type: string, format: date-time, nullable: true}
+        created_at: {type: string, format: date-time}
+        counts: {type: object, nullable: true, additionalProperties: {type: integer}, description: 'Nombre de vouchers par statut.'}
+    Voucher:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        code: {type: string}
+        status: {type: string, enum: [GENERATED, AVAILABLE, SOLD, ACTIVE, USED, EXPIRED, REVOKED, VIP]}
+        sync_status: {type: string, enum: [PENDING, SYNCED, FAILED]}
+        site_id: {type: string, format: uuid}
+        router_id: {type: string, format: uuid}
+        batch_id: {type: string, format: uuid, nullable: true}
+        profile_id: {type: string, format: uuid}
+        price: {type: integer}
+        currency: {type: string}
+        duration_minutes: {type: integer, nullable: true}
+        rate_limit: {type: string, nullable: true}
+        device_limit: {type: integer}
+        data_limit_mb: {type: integer, nullable: true}
+        is_vip: {type: boolean}
+        valid_until: {type: string, format: date-time, nullable: true}
+        sold_at: {type: string, format: date-time, nullable: true}
+        activated_at: {type: string, format: date-time, nullable: true}
+        revoked_at: {type: string, format: date-time, nullable: true}
+        label: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+    HotspotSession:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        router_id: {type: string, format: uuid}
+        username: {type: string}
+        ip: {type: string, nullable: true}
+        mac: {type: string, nullable: true}
+        uptime_seconds: {type: integer}
+        bytes_in: {type: integer}
+        bytes_out: {type: integer}
+        started_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        active: {type: boolean}
+    NetworkEvent:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        router_id: {type: string, format: uuid, nullable: true}
+        type: {type: string, example: ROUTER_OFFLINE}
+        severity: {type: string, enum: [INFO, WARNING, ERROR]}
+        message: {type: string, nullable: true}
+        metadata: {type: object, nullable: true}
+        created_at: {type: string, format: date-time}
+    Sale:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        site_id: {type: string, format: uuid, nullable: true}
+        router_id: {type: string, format: uuid, nullable: true}
+        voucher_id: {type: string, format: uuid, nullable: true}
+        profile_id: {type: string, format: uuid, nullable: true}
+        agent_id: {type: string, format: uuid, nullable: true}
+        amount: {type: integer, description: 'Unités mineures (instantané du prix au moment de la vente)'}
+        currency: {type: string, example: XOF}
+        payment_method: {type: string, enum: [CASH, MOBILE_MONEY, BANK, OTHER]}
+        provider_transaction_id: {type: string, nullable: true}
+        status: {type: string, enum: [COMPLETED, VOIDED]}
+        sold_at: {type: string, format: date-time}
+        voided_at: {type: string, format: date-time, nullable: true}
+        void_reason: {type: string, nullable: true}
+        voucher_code: {type: string, nullable: true, description: 'Renvoyé uniquement à la création (et au rejeu par le vendeur d''origine ou un propriétaire)'}
+    CashRegister:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        site_id: {type: string, format: uuid, nullable: true}
+        name: {type: string}
+        currency: {type: string}
+        is_active: {type: boolean}
+    CashSession:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        cash_register_id: {type: string, format: uuid}
+        status: {type: string, enum: [OPEN, CLOSED]}
+        currency: {type: string}
+        opened_by: {type: string, format: uuid}
+        closed_by: {type: string, format: uuid, nullable: true}
+        opening_balance: {type: integer}
+        current_balance: {type: integer, nullable: true, description: 'Session ouverte uniquement'}
+        expected_balance: {type: integer, nullable: true}
+        counted_balance: {type: integer, nullable: true}
+        difference: {type: integer, nullable: true, description: 'compté - attendu'}
+        opened_at: {type: string, format: date-time}
+        closed_at: {type: string, format: date-time, nullable: true}
+        note: {type: string, nullable: true}
+    CashTransaction:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        cash_session_id: {type: string, format: uuid}
+        type: {type: string, enum: [OPEN, CASH_IN, SALE, EXPENSE, WITHDRAWAL, ADJUSTMENT, CLOSE]}
+        amount: {type: integer, description: 'Signé : + entrée, - sortie'}
+        currency: {type: string}
+        sale_id: {type: string, format: uuid, nullable: true}
+        user_id: {type: string, format: uuid, nullable: true}
+        note: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+    SalesReport:
+      type: object
+      properties:
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              period_start: {type: string, format: date}
+              currency: {type: string}
+              group: {type: string, nullable: true, description: 'Valeur de la dimension demandée (site, agent, profil ou moyen de paiement)'}
+              sales_count: {type: integer}
+              total: {type: integer}
+        totals:
+          type: array
+          items:
+            type: object
+            properties:
+              currency: {type: string}
+              sales_count: {type: integer}
+              total: {type: integer}
+    Dashboard:
+      type: object
+      properties:
+        date: {type: string, format: date, description: 'Jour local du tenant'}
+        network:
+          type: object
+          properties:
+            routers_online: {type: integer}
+            routers_offline: {type: integer}
+            routers_pending: {type: integer}
+            connected_clients: {type: integer}
+        tickets:
+          type: object
+          properties:
+            active: {type: integer}
+            available: {type: integer}
+            sold: {type: integer}
+        revenue_today:
+          type: array
+          items:
+            type: object
+            properties:
+              currency: {type: string}
+              sales_count: {type: integer}
+              total: {type: integer}
+        cash_session:
+          allOf: [{$ref: '#/components/schemas/CashSession'}]
+          nullable: true
+    StaffMember:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        email: {type: string, nullable: true}
+        phone: {type: string, nullable: true}
+        locale: {type: string}
+        status: {type: string, enum: [ACTIVE, DISABLED]}
+        last_login_at: {type: string, format: date-time, nullable: true}

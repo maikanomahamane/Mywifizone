@@ -1,0 +1,37 @@
+<!--
+  MODÈLE de page « login.html » du HotSpot MikroTik — NON TESTÉ sur un routeur réel.
+  Il redirige le client vers le portail MY WIFIZONE en lui transmettant :
+    r                 = identifiant du routeur dans MY WIFIZONE (fiche routeur)
+    link-login-only   = URL de connexion du HotSpot (fournie par RouterOS via la variable $(link-login-only))
+    link-orig         = page demandée à l'origine ($(link-orig))
+  Le portail n'envoie le code qu'à une adresse de réseau local (voir docs/adr/0009-portail-captif.md).
+
+  À adapter : PORTAL_HOST, SLUG (écran « Portail captif » de l'app), ROUTER_ID.
+  À faire sur le routeur AVANT de tester (à vérifier dans la documentation RouterOS de votre version) :
+    - autoriser l'accès au portail sans connexion (walled garden). Pour un site en HTTPS, la règle porte sur l'adresse IP :
+        /ip hotspot walled-garden ip add dst-host=PORTAL_HOST action=accept
+      (et, si nécessaire, la règle `walled-garden` classique pour HTTP) ;
+    - autoriser aussi les domaines de votre fournisseur de paiement quand il en existera un.
+  Chargement : /file (ou WinBox) -> dossier du HotSpot (hotspot/login.html) en remplaçant le fichier d'origine
+  (gardez une copie de l'original).
+-->
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WiFi</title>
+</head>
+<body>
+<noscript>JavaScript est requis.</noscript>
+<script>
+  var PORTAL = 'https://PORTAL_HOST/api/v1/portal/SLUG/page';
+  var ROUTER_ID = 'ROUTER_ID';
+  var loginOnly = '$(link-login-only)';
+  var orig = '$(link-orig)';
+  location.replace(PORTAL + '?r=' + encodeURIComponent(ROUTER_ID)
+    + '&link-login-only=' + encodeURIComponent(loginOnly)
+    + '&link-orig=' + encodeURIComponent(orig));
+</script>
+</body>
+</html>

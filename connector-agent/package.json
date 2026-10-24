@@ -1,0 +1,12 @@
+{
+  "name": "wifizone-agent",
+  "version": "0.1.0",
+  "description": "Agent MY WIFIZONE : fait le lien (connexion sortante) entre le cloud et l'API REST d'un routeur MikroTik (RouterOS 7).",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test test/*.test.js"
+  }
+}

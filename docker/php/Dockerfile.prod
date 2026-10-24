@@ -1,0 +1,25 @@
+# Image de production : code COPIÉ dans l'image (pas de volume), dépendances sans dev, caches Laravel pré-chauffés.
+# Construire APRÈS `make setup` (le dossier backend/ contient le squelette Laravel + l'overlay) :
+#   docker build -f docker/php/Dockerfile.prod -t mywifizone-app:<version> .
+FROM php:8.3-fpm-alpine AS base
+
+RUN apk add --no-cache icu-libs libzip libpq oniguruma freetype libjpeg-turbo libpng \
+    && apk add --no-cache --virtual .build git unzip icu-dev libzip-dev postgresql-dev oniguruma-dev freetype-dev libjpeg-turbo-dev libpng-dev $PHPIZE_DEPS \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j"$(nproc)" pdo_pgsql intl zip bcmath pcntl mbstring gd opcache \
+    && pecl install redis && docker-php-ext-enable redis \
+    && apk del .build
+
+COPY docker/php/php-prod.ini /usr/local/etc/php/conf.d/zz-prod.ini
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www/html
+COPY backend/ /var/www/html/
+RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --classmap-authoritative \
+    && rm -f .env \
+    && mkdir -p storage/framework/{cache,sessions,views} storage/logs storage/app/mpdf bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache
+
+USER www-data
+EXPOSE 9000
+CMD ["php-fpm"]
