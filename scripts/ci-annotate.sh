@@ -10,3 +10,5 @@ f="${1:?fichier}"; max="${2:-40}"
 # Toujours : FAIL de chaque test + dernières lignes brutes
 grep -E "FAILED|FAIL " "$f" | cut -c1-200 | head -30 | while IFS= read -r l; do echo "::error::${l//%/%25}"; done
 tail -n 25 "$f" | cut -c1-240 | while IFS= read -r l; do [ -n "$l" ] && echo "::error::TAIL ${l//%/%25}"; done
+# Détail de chaque échec (bloc multi-lignes)
+awk '/^[[:space:]]*(FAILED|FAIL)[[:space:]]/{if(b!="")print b; b=$0; n=0; next} b!=""&&n<9&&NF{b=b"%0A"$0; n++} END{if(b!="")print b}' "$f" | cut -c1-900 | head -12 | while IFS= read -r l; do echo "::error::DETAIL $l"; done
