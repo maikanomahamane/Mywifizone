@@ -56,3 +56,11 @@ Crée un compte de test et déroule : santé, disponibilité, inscription, conne
 - Index présents sur les requêtes chaudes (ventes par jour/agent/site/profil, vouchers par routeur/profil/statut, commandes d'agent, sessions) ; trois index ajoutés pour les sondes (migration `2026_10_22_000001`).
 - Opcache sans revalidation, autoloader optimisé, config/routes en cache, `queue:work --max-time`.
 - **Aucun test de charge n'a été exécuté.** `scripts/load-test.js` (k6) fournit un point de départ sur les routes publiques : à lancer sur une recette avant l'ouverture commerciale.
+
+## Routeurs en connexion directe
+
+Le serveur (php-fpm et `worker`) appelle l'API REST HTTPS des routeurs : les connexions **sortantes** vers le port 443 (ou celui saisi) des routeurs doivent être permises par le pare-feu de l'hébergeur. Le `scheduler` lance `routers:poll-rest` chaque minute (commandes en attente, santé, sessions). Le `worker` doit tourner (`QUEUE_CONNECTION=redis`) : sans lui, les commandes ne partent qu'à la minute suivante.
+
+- `ROUTER_REST_ALLOW_PRIVATE=false` (défaut) : refuse les adresses privées/réservées (192.168/16, 10/8, 172.16/12, 100.64/10, 127/8, 169.254/16…). Ne mettre `true` que si les routeurs sont joints par un VPN privé (WireGuard) **et** que tous les clients sont de confiance.
+- Communiquer aux clients l'adresse IP **sortante** de votre serveur pour qu'ils l'autorisent seule sur le port 443 de leur routeur.
+- Seul le compte dédié `wifizone` est stocké (chiffré avec `APP_KEY`) ; changer `APP_KEY` le rend illisible : prévoir « Reconnecter » pour chaque routeur.

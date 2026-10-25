@@ -33,6 +33,19 @@ final class RouterService
         return [$router, $code];
     }
 
+    /** Routeur en connexion directe : pas de code d'enrôlement ; il devient utilisable après RestRouterProvisioner::connect(). */
+    public function createRest(array $data): Router
+    {
+        $router = new Router($data);
+        $router->connection_mode = 'REST';
+        $router->status = RouterStatus::PENDING;
+        $router->save();
+
+        NetworkEvent::record($router->tenant_id, $router->getKey(), 'ROUTER_CREATED', 'INFO', null, ['name' => $router->name, 'mode' => 'REST']);
+
+        return $router;
+    }
+
     /**
      * Échange un code d'enrôlement contre un jeton d'agent (retourné une seule fois, stocké haché).
      * Hors contexte tenant : l'agent n'est pas encore authentifié. Retourne null si le code est inconnu, expiré ou déjà utilisé.
@@ -120,7 +133,7 @@ final class RouterService
     public function assertEnrolled(Router $router): void
     {
         if (! $router->isEnrolled()) {
-            throw new ApiException('router_not_enrolled', 'Le routeur n\'est pas encore enrôlé.', 409);
+            throw new ApiException('router_not_enrolled', $router->isRest() ? 'Le routeur n\'est pas encore connecté.' : 'Le routeur n\'est pas encore enrôlé.', 409);
         }
     }
 }

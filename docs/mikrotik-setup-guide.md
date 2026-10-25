@@ -1,6 +1,44 @@
-# Guide d'installation MikroTik + agent
+# Guide d'installation MikroTik
 
-> **Statut** : procédure écrite d'après la documentation MikroTik (RouterOS 7, REST API) et **non testée sur un routeur réel**. À valider sur un routeur de test.
+> **Statut** : procédures écrites d'après la documentation MikroTik (RouterOS 7, API REST) et **non testées sur un routeur réel**. À valider sur un routeur de test.
+
+Deux façons de relier un routeur à MY WIFIZONE :
+
+| Mode | Quand l'utiliser |
+|---|---|
+| **Identifiants MikroTik** (connexion directe, recommandé) | Le routeur est joignable depuis Internet : IP publique, nom de domaine (DDNS) ou VPN. Rien à installer sur le site. |
+| **Agent** (section « Mode agent » plus bas) | Le routeur n'a pas d'IP publique (CGNAT, 4G…) : un petit programme sur le site se connecte vers le cloud. |
+
+## 0. Mode « Identifiants MikroTik » (connexion directe)
+
+**Sur le routeur (RouterOS 7.1+)**
+1. Configurer le HotSpot : `/ip hotspot setup`.
+2. Activer l'API REST en HTTPS :
+   ```
+   /certificate add name=wz-cert common-name=router.local days-valid=3650 key-usage=tls-server
+   /certificate sign wz-cert
+   /ip service set www-ssl certificate=wz-cert disabled=no
+   /ip service set www disabled=yes
+   ```
+3. Autoriser le serveur MY WIFIZONE à joindre le port 443 (pare-feu), **et lui seul** si possible :
+   ```
+   /ip firewall filter add chain=input protocol=tcp dst-port=443 src-address=<IP-du-serveur-WIFIZONE> action=accept place-before=0
+   /ip firewall filter add chain=input protocol=tcp dst-port=443 action=drop place-before=1
+   ```
+
+**Dans l'application** : *Réseau → Ajouter un routeur → Identifiants MikroTik* : adresse (IP publique ou domaine), port (443), identifiant **admin** et mot de passe.
+
+Ce qui se passe :
+- Les identifiants admin servent **une seule fois**. L'application crée sur le routeur un groupe et un utilisateur **`wifizone`** (droits `read,write,api,rest-api,test`, mot de passe aléatoire de 32 caractères), vérifie qu'ils fonctionnent, ne conserve **que ce compte** (chiffré) et **oublie l'admin**.
+- Si le mot de passe admin change plus tard, rien ne casse : le compte `wifizone` continue de fonctionner. Pour recréer ce compte, utiliser *Reconnecter* dans le menu du routeur.
+- Certificat auto-signé (cas courant) : laisser « Vérifier le certificat HTTPS » désactivé.
+- Le serveur refuse les adresses locales (192.168.x.x, 10.x.x.x, 127.x…) : il doit joindre le routeur par son adresse **publique** (ou par VPN, voir `ROUTER_REST_ALLOW_PRIVATE` dans `docs/deployment-guide.md`).
+
+Erreurs courantes : *identifiant ou mot de passe refusé* (mauvais compte), *routeur injoignable* (adresse, port 443, pare-feu, service `www-ssl`), *certificat refusé* (activer l'option auto-signé), *aucun HotSpot* (lancer `/ip hotspot setup`).
+
+---
+
+## Mode agent
 
 ## 1. Préparer le routeur (RouterOS 7.1+)
 

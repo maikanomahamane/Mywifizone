@@ -27,4 +27,20 @@ return [
     // Vouchers par commande CREATE_VOUCHER, et taille de lot par défaut quand le plan ne la limite pas (clé max_batch_size).
     'voucher_chunk' => 50,
     'default_max_batch_size' => (int) env('NETWORK_DEFAULT_MAX_BATCH_SIZE', 500),
+
+    // Connexion directe (API REST RouterOS, HTTPS) : le serveur appelle le routeur. Délais courts : un routeur lent ne
+    // doit pas bloquer les files de travail.
+    'rest' => [
+        'timeout_seconds' => (int) env('ROUTER_REST_TIMEOUT', 10),
+        'connect_timeout_seconds' => (int) env('ROUTER_REST_CONNECT_TIMEOUT', 5),
+        // Vrai uniquement si le serveur joint les routeurs par un réseau privé (VPN WireGuard…) ET que les clients sont de
+        // confiance : sinon un client pourrait viser les services internes de l'hébergement (SSRF).
+        'allow_private' => (bool) env('ROUTER_REST_ALLOW_PRIVATE', false),
+        // Une interrogation (santé + sessions) par routeur toutes les N secondes au plus.
+        'heartbeat_seconds' => (int) env('ROUTER_REST_HEARTBEAT', 30),
+        'dedicated_user' => 'wifizone',
+        'dedicated_group' => 'wifizone',
+        'group_policy' => 'read,write,api,rest-api,test',
+        'forbidden_ports' => [22, 23, 25, 110, 143, 465, 587, 993, 995, 3306, 5432, 6379, 11211, 27017],
+    ],
 ];

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MY WIFIZONE API
-  version: 0.8.0
+  version: 0.9.0
   description: |
     API REST versionnée de MY WIFIZONE (Phases 1 à 7 : authentification, multi-tenant, RBAC, abonnements,
     facturation, paiements, Super Admin, réseau WiFi : routeurs, profils, vouchers, sessions, API de l'agent, ventes, caisse, rapports, agents, documents PDF/QR/CSV, personnalisation, devises et taux indicatifs).
@@ -731,6 +731,50 @@ paths:
         '402': {$ref: '#/components/responses/SubscriptionInactive'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+
+  /routers/{id}/test:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Réseau]
+      summary: 'Teste la connexion directe avec le compte dédié enregistré (ne modifie rien sur le routeur)'
+      responses:
+        '200': {description: Connexion OK, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Router'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: 'Ce routeur n''est pas en connexion directe (`not_direct_router`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {description: 'Échec de connexion : `router_auth_failed`, `router_unreachable`, `router_timeout`, `router_tls_failed`, `router_target_forbidden`, `router_rights_insufficient`, `router_api_error`.', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '429': {description: 'Trop d''essais (10 par minute et par utilisateur).'}
+
+  /routers/{id}/reconnect:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      tags: [Réseau]
+      summary: 'Reconnecte un routeur en connexion directe avec de nouveaux identifiants admin (le compte dédié est recréé)'
+      description: 'Les identifiants admin ne servent qu''à cet appel : ils ne sont ni stockés ni journalisés.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                host: {type: string, description: 'Défaut : adresse enregistrée.'}
+                port: {type: integer, minimum: 1, maximum: 65535}
+                username: {type: string, maxLength: 64}
+                password: {type: string, maxLength: 255, format: password, writeOnly: true}
+                verify_tls: {type: boolean}
+      responses:
+        '200': {description: Routeur reconnecté, content: {application/json: {schema: {allOf: [{$ref: '#/components/schemas/Envelope'}, {type: object, properties: {data: {$ref: '#/components/schemas/Router'}}}]}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/SubscriptionInactive'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: 'Ce routeur n''est pas en connexion directe (`not_direct_router`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
+        '422': {description: 'Échec de connexion (mêmes codes que `/routers/{id}/test`).', content: {application/json: {schema: {$ref: '#/components/schemas/Envelope'}}}}
 
   /routers/{id}/rotate-agent-token:
     parameters:
@@ -2194,10 +2238,14 @@ components:
         name: {type: string}
         model: {type: string, nullable: true}
         routeros_version: {type: string, nullable: true}
-        connection_mode: {type: string, enum: [AGENT]}
+        connection_mode: {type: string, enum: [AGENT, REST], description: 'AGENT : agent sortant (code d''enrôlement). REST : connexion directe, le serveur appelle l''API REST du routeur avec un compte dédié.'}
         status: {type: string, enum: [PENDING, ONLINE, OFFLINE]}
         hotspot_server: {type: string, nullable: true}
         agent_enrolled: {type: boolean}
+        rest_host: {type: string, nullable: true, description: 'Mode REST uniquement. Jamais de mot de passe dans l''API.'}
+        rest_port: {type: integer, nullable: true}
+        rest_verify_tls: {type: boolean, nullable: true}
+        rest_error: {type: string, nullable: true, description: 'Dernier échec de connexion au routeur (diagnostic).'}
         enrollment_pending: {type: boolean}
         last_seen_at: {type: string, format: date-time, nullable: true}
         health: {type: object, nullable: true}
@@ -2221,6 +2269,12 @@ components:
         name: {type: string, maxLength: 120}
         model: {type: string, maxLength: 80, nullable: true}
         hotspot_server: {type: string, pattern: '^[A-Za-z0-9._-]{1,60}$'}
+        connection_mode: {type: string, enum: [AGENT, REST], default: AGENT}
+        host: {type: string, maxLength: 253, description: 'REST : IPv4 ou nom de domaine publics (pas de http://, pas de port).'}
+        port: {type: integer, minimum: 1, maximum: 65535, default: 443}
+        username: {type: string, maxLength: 64, description: 'REST : identifiant ADMIN du MikroTik (utilisé une seule fois).'}
+        password: {type: string, maxLength: 255, format: password, writeOnly: true, description: 'REST : mot de passe admin, jamais stocké ni journalisé. Le serveur crée un compte dédié `wifizone` aux droits limités et ne conserve que celui-ci (chiffré).'}
+        verify_tls: {type: boolean, default: false, description: 'Vérifier le certificat HTTPS du routeur (faux pour un certificat auto-signé).'}
     RouterUpdate:
       type: object
       properties:

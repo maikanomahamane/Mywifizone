@@ -8,3 +8,4 @@ Schedule::command('payments:expire-stale')->everyTenMinutes()->withoutOverlappin
 Schedule::command('network:maintain')->everyMinute()->withoutOverlapping();
 Schedule::command('vouchers:expire')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('monitor:check')->everyFiveMinutes()->withoutOverlapping();
+Schedule::command('routers:poll-rest')->everyMinute()->withoutOverlapping();

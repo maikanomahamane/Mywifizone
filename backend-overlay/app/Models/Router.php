@@ -16,7 +16,7 @@ class Router extends Model
     // tenant_id, statut, jetons : jamais depuis la requête.
     protected $fillable = ['site_id', 'name', 'model', 'hotspot_server'];
 
-    protected $hidden = ['enrollment_hash', 'agent_token_hash'];
+    protected $hidden = ['enrollment_hash', 'agent_token_hash', 'rest_password'];
 
     protected function casts(): array
     {
@@ -26,6 +26,9 @@ class Router extends Model
             'enrollment_expires_at' => 'datetime',
             'agent_enrolled_at' => 'datetime',
             'last_seen_at' => 'datetime',
+            'rest_password' => 'encrypted',
+            'rest_verify_tls' => 'boolean',
+            'rest_checked_at' => 'datetime',
         ];
     }
 
@@ -39,9 +42,15 @@ class Router extends Model
         return $this->hasMany(AccessPoint::class);
     }
 
+    public function isRest(): bool
+    {
+        return $this->connection_mode === 'REST';
+    }
+
+    /** Prêt à recevoir des commandes : agent enrôlé, ou (connexion directe) compte dédié configuré. */
     public function isEnrolled(): bool
     {
-        return $this->agent_token_hash !== null;
+        return $this->isRest() ? $this->rest_password !== null : $this->agent_token_hash !== null;
     }
 
     public function isOnline(): bool
@@ -61,7 +70,11 @@ class Router extends Model
             'connection_mode' => $this->connection_mode,
             'status' => $this->status,
             'hotspot_server' => $this->hotspot_server,
-            'agent_enrolled' => $this->isEnrolled(),
+            'agent_enrolled' => ! $this->isRest() && $this->isEnrolled(),
+            'rest_host' => $this->isRest() ? $this->rest_host : null,
+            'rest_port' => $this->isRest() ? $this->rest_port : null,
+            'rest_verify_tls' => $this->isRest() ? (bool) $this->rest_verify_tls : null,
+            'rest_error' => $this->isRest() ? $this->rest_error : null,
             'enrollment_pending' => $this->enrollment_hash !== null && $this->enrollment_expires_at?->isFuture() === true,
             'last_seen_at' => $this->last_seen_at?->toIso8601String(),
             'health' => $this->health,

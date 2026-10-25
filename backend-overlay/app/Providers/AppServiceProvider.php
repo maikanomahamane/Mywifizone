@@ -109,6 +109,8 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('ops', fn (Request $request) => Limit::perMinute(30)->by('ops:'.$request->ip()));
         RateLimiter::for('portal', fn (Request $request) => Limit::perMinute(120)->by('portal:'.$request->ip()));
         RateLimiter::for('portal-orders', fn (Request $request) => Limit::perMinute(10)->by('portal-order:'.$request->ip()));
+        // Ajout / test d'un routeur par identifiants : chaque essai provoque un appel réseau sortant, plafonné par utilisateur.
+        RateLimiter::for('router-connect', fn (Request $request) => Limit::perMinute(10)->by('router-connect:'.($request->user()?->getKey() ?: $request->ip())));
         RateLimiter::for('agent-enroll', fn (Request $request) => Limit::perMinute(10)->by('enroll:'.$request->ip()));
     }
 }

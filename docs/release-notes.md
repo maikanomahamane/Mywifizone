@@ -26,3 +26,10 @@ Statut : **candidate non validée**. Le code a été écrit phase par phase sans
 - Pas de reversement aux propriétaires, pas de numérotation fiscale des factures.
 - Pas de test de charge ni de test d'intrusion ; pas de suivi d'erreurs externe.
 - La langue choisie dans « Plus » n'est pas mémorisée ; dates non localisées ; logo téléversé par l'API seulement.
+
+## 0.9.0 — Ajout d'un routeur par identifiants MikroTik
+- Nouveau mode **connexion directe** : adresse + identifiant admin + mot de passe du MikroTik dans l'application. Le serveur crée un compte dédié limité `wifizone`, ne conserve que celui-ci (chiffré) et oublie l'admin. Inspiré du fonctionnement des applications de tickets MikroTik du Play Store (MikroTicket : accès distant par identifiants du routeur).
+- Actions *Tester la connexion* et *Reconnecter* ; mêmes commandes, file, tentatives et effets métier que l'agent.
+- Garde-fous : HTTPS uniquement, refus des adresses privées/réservées et de ports sensibles (anti-SSRF), IP validée épinglée contre le « DNS rebinding », limite de 10 essais/minute.
+- Le mode agent reste disponible pour les routeurs sans IP publique (CGNAT).
+- Non validé sur un routeur réel : tests contre un simulateur de l'API REST RouterOS.

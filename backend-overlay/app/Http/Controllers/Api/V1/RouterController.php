@@ -14,8 +14,10 @@ use App\Services\AuditLogger;
 use App\Services\CommandQueue;
 use App\Services\ConnectorManager;
 use App\Services\PlanEntitlements;
+use App\Services\RestRouterProvisioner;
 use App\Services\RouterService;
 use App\Services\VoucherService;
+use App\Support\ApiException;
 use App\Support\ApiResponse;
 use App\Support\Rules;
 use Illuminate\Http\JsonResponse;
@@ -28,6 +30,7 @@ class RouterController extends Controller
 {
     public function __construct(
         private readonly RouterService $routers,
+        private readonly RestRouterProvisioner $provisioner,
         private readonly ConnectorManager $connectors,
         private readonly CommandQueue $queue,
         private readonly VoucherService $vouchers,
@@ -67,8 +70,21 @@ class RouterController extends Controller
             'name' => ['required', 'string', 'max:120'],
             'model' => ['nullable', 'string', 'max:80'],
             'hotspot_server' => ['nullable', 'string', 'regex:/^[A-Za-z0-9._-]{1,60}$/D'],
+            'connection_mode' => ['sometimes', Rule::in(['AGENT', 'REST'])],
+            // Connexion directe : adresse du routeur + identifiants ADMIN (utilisés une seule fois, jamais conservés).
+            'host' => ['required_if:connection_mode,REST', 'nullable', 'string', 'max:253'],
+            'port' => ['nullable', 'integer', 'between:1,65535'],
+            'username' => ['required_if:connection_mode,REST', 'nullable', 'string', 'max:64'],
+            'password' => ['required_if:connection_mode,REST', 'nullable', 'string', 'max:255'],
+            'verify_tls' => ['nullable', 'boolean'],
         ]);
-        $data = array_filter($data, fn ($v) => $v !== null);
+        $rest = $data['connection_mode'] ?? 'AGENT';
+        $connection = array_intersect_key($data, array_flip(['host', 'port', 'username', 'password', 'verify_tls']));
+        $data = array_filter(array_diff_key($data, array_flip(['connection_mode', 'host', 'port', 'username', 'password', 'verify_tls'])), fn ($v) => $v !== null);
+
+        if ($rest === 'REST') {
+            return $this->storeRest($data, $connection);
+        }
 
         [$router, $code] = DB::transaction(function () use ($data) {
             // Verrou sur l'abonnement : deux créations simultanées ne peuvent pas dépasser la limite du plan.
@@ -81,6 +97,81 @@ class RouterController extends Controller
         $this->audit->log('router.created', null, $router, ['name' => $router->name]);
 
         return ApiResponse::ok($router->toPayload() + ['enrollment' => $this->enrollmentPayload($router, $code)], status: 201);
+    }
+
+    /**
+     * Ajout par identifiants MikroTik : le routeur est créé puis connecté. Si la connexion échoue, rien n'est conservé
+     * (le routeur créé est supprimé) et l'erreur dit précisément quoi corriger.
+     *
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $c
+     */
+    private function storeRest(array $data, array $c): JsonResponse
+    {
+        $router = DB::transaction(function () use ($data) {
+            Subscription::lockForUpdate()->first();
+            $this->entitlements->assertCanAdd('max_routers', Router::count());
+
+            return $this->routers->createRest($data);
+        });
+
+        try {
+            $this->provisioner->connect(
+                $router, (string) $c['host'], (int) ($c['port'] ?? 443), (string) $c['username'], (string) $c['password'],
+                (bool) ($c['verify_tls'] ?? false), $data['hotspot_server'] ?? null,
+            );
+        } catch (\Throwable $e) {
+            $router->delete();
+
+            throw $e;
+        }
+
+        $this->audit->log('router.created', null, $router, ['name' => $router->name, 'mode' => 'REST', 'host' => $router->rest_host]);
+
+        return ApiResponse::ok($router->refresh()->toPayload(), status: 201);
+    }
+
+    /** Teste la connexion directe avec le compte dédié enregistré (ne modifie rien sur le routeur). */
+    public function testConnection(string $id): JsonResponse
+    {
+        $router = Router::findOrFail($id);
+        Gate::authorize('update', $router);
+        $this->assertRest($router);
+
+        $health = $this->provisioner->test($router);
+
+        return ApiResponse::ok(['ok' => true, 'health' => $health] + $router->refresh()->toPayload());
+    }
+
+    /** Reconnecte avec de nouveaux identifiants admin (mot de passe changé, nouvelle adresse) : le compte dédié est recréé. */
+    public function reconnect(Request $request, string $id): JsonResponse
+    {
+        $router = Router::findOrFail($id);
+        Gate::authorize('update', $router);
+        $this->assertRest($router);
+
+        $c = $request->validate([
+            'host' => ['nullable', 'string', 'max:253'],
+            'port' => ['nullable', 'integer', 'between:1,65535'],
+            'username' => ['required', 'string', 'max:64'],
+            'password' => ['required', 'string', 'max:255'],
+            'verify_tls' => ['nullable', 'boolean'],
+        ]);
+
+        $this->provisioner->connect(
+            $router, (string) ($c['host'] ?? $router->rest_host), (int) ($c['port'] ?? $router->rest_port ?? 443), $c['username'], $c['password'],
+            (bool) ($c['verify_tls'] ?? $router->rest_verify_tls), $router->hotspot_server,
+        );
+        $this->audit->log('router.reconnected', null, $router, ['host' => $router->rest_host]);
+
+        return ApiResponse::ok($router->refresh()->toPayload());
+    }
+
+    private function assertRest(Router $router): void
+    {
+        if (! $router->isRest()) {
+            throw new ApiException('not_direct_router', 'Ce routeur n\'est pas en connexion directe.', 409);
+        }
     }
 
     public function update(Request $request, string $id): JsonResponse
@@ -115,6 +206,9 @@ class RouterController extends Controller
     {
         $router = Router::findOrFail($id);
         Gate::authorize('update', $router);
+        if ($router->isRest()) {
+            throw new ApiException('not_agent_router', 'Ce routeur est en connexion directe (pas d\'agent).', 409);
+        }
 
         $code = $this->routers->rotateAgentToken($router);
         $this->audit->log('router.agent_token_rotated', null, $router);

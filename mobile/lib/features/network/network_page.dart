@@ -5,6 +5,7 @@ import '../../core/providers.dart';
 import '../../localization/app_localizations.dart';
 import '../common/widgets.dart';
 import 'enrollment_dialog.dart';
+import 'reconnect_dialog.dart';
 import 'network_providers.dart';
 import 'router_form.dart';
 
@@ -57,7 +58,11 @@ class _RoutersTab extends ConsumerWidget {
           );
           if (created == null || !context.mounted) return;
           ref.invalidate(routersProvider);
-          await showEnrollmentDialog(context, created);
+          if (created['connection_mode'] == 'REST') {
+            showMessage(context, t.routerConnected);
+          } else {
+            await showEnrollmentDialog(context, created);
+          }
         },
         icon: const Icon(Icons.add),
         label: Text(t.routerAdd),
@@ -83,6 +88,7 @@ class _RoutersTab extends ConsumerWidget {
                       subtitle: Text([
                         if (model != null) model,
                         '${r['clients_count']} ${t.sessionsTitle.toLowerCase()}',
+                        if (r['rest_error'] is String) r['rest_error'] as String,
                       ].join(' · ')),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -93,6 +99,13 @@ class _RoutersTab extends ConsumerWidget {
                               final api = ref.read(apiClientProvider);
                               if (v == 'sync') {
                                 await _action(context, ref, () async => api.post('/routers/${r['id']}/sync'), t.syncQueued);
+                              } else if (v == 'test') {
+                                await _action(context, ref, () async {
+                                  await api.post('/routers/${r['id']}/test');
+                                  ref.invalidate(routersProvider);
+                                }, t.routerTestOk);
+                              } else if (v == 'reconnect') {
+                                await showReconnectDialog(context, ref, r['id'] as String, r['rest_host'] as String? ?? '');
                               } else if (v == 'rotate') {
                                 try {
                                   final res = await api.post('/routers/${r['id']}/rotate-agent-token');
@@ -104,8 +117,12 @@ class _RoutersTab extends ConsumerWidget {
                               }
                             },
                             itemBuilder: (_) => [
-                              if (r['agent_enrolled'] == true) PopupMenuItem(value: 'sync', child: Text(t.routerSync)),
-                              PopupMenuItem(value: 'rotate', child: Text(t.routerRotate)),
+                              if (r['agent_enrolled'] == true || r['connection_mode'] == 'REST') PopupMenuItem(value: 'sync', child: Text(t.routerSync)),
+                              if (r['connection_mode'] == 'REST') ...[
+                                PopupMenuItem(value: 'test', child: Text(t.routerTest)),
+                                PopupMenuItem(value: 'reconnect', child: Text(t.routerReconnect)),
+                              ] else
+                                PopupMenuItem(value: 'rotate', child: Text(t.routerRotate)),
                             ],
                           ),
                         ],

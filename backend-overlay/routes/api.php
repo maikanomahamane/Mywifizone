@@ -121,7 +121,9 @@ Route::prefix('v1')->group(function () {
 
         Route::get('routers', [RouterController::class, 'index'])->middleware('permission:routers.view');
         Route::get('routers/{id}', [RouterController::class, 'show'])->whereUuid('id')->middleware('permission:routers.view');
-        Route::post('routers', [RouterController::class, 'store'])->middleware(['permission:routers.manage', $write]);
+        Route::post('routers', [RouterController::class, 'store'])->middleware(['permission:routers.manage', $write, 'throttle:router-connect']);
+        Route::post('routers/{id}/test', [RouterController::class, 'testConnection'])->whereUuid('id')->middleware(['permission:routers.manage', 'throttle:router-connect']);
+        Route::post('routers/{id}/reconnect', [RouterController::class, 'reconnect'])->whereUuid('id')->middleware(['permission:routers.manage', $write, 'throttle:router-connect']);
         Route::put('routers/{id}', [RouterController::class, 'update'])->whereUuid('id')->middleware(['permission:routers.manage', $write]);
         Route::delete('routers/{id}', [RouterController::class, 'destroy'])->whereUuid('id')->middleware(['permission:routers.manage', $write]);
         Route::post('routers/{id}/rotate-agent-token', [RouterController::class, 'rotateAgentToken'])->whereUuid('id')->middleware(['permission:routers.manage', $write]);

@@ -2,17 +2,19 @@
 
 namespace App\Services;
 
+use App\Jobs\RunRestRouter;
 use App\Models\Router;
 use App\Models\RouterCommand;
-use App\Support\ApiException;
 
 /**
- * Appel direct de l'API REST de RouterOS 7 (HTTPS) quand le routeur a une IP joignable depuis le cloud.
- * NON BRANCHÉ : à construire avec un routeur de test, des identifiants dédiés à permissions minimales stockés
- * chiffrés, des délais d'attente, des tentatives et un coupe-circuit. Voir docs/mikrotik-setup-guide.md.
+ * Connexion directe : le serveur appelle l'API REST de RouterOS 7 (HTTPS) avec le compte dédié créé à l'ajout du routeur
+ * (mot de passe chiffré en base). Utilisable quand le routeur est joignable depuis le serveur (IP publique, DDNS, VPN).
+ * La commande passe par la même file que l'agent (suivi, tentatives, effets métier) ; un traitement est lancé aussitôt.
  */
 final class RestApiConnector implements NetworkConnector
 {
+    public function __construct(private readonly CommandQueue $queue) {}
+
     public function mode(): string
     {
         return 'REST';
@@ -20,11 +22,15 @@ final class RestApiConnector implements NetworkConnector
 
     public function isAvailable(): bool
     {
-        return false;
+        return true;
     }
 
     public function send(Router $router, string $type, array $payload, ?string $createdBy = null): RouterCommand
     {
-        throw new ApiException('connector_unavailable', 'Le mode de connexion directe (REST) n\'est pas disponible.', 409);
+        $command = $this->queue->enqueue($router, $type, $payload, $createdBy);
+
+        RunRestRouter::dispatch($router->getKey(), $router->tenant_id)->afterCommit();
+
+        return $command;
     }
 }

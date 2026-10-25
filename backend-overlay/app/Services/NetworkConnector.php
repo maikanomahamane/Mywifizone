@@ -10,7 +10,7 @@ use App\Models\RouterCommand;
  * ils demandent à un connecteur d'exécuter une commande, quel que soit le mode de connexion du routeur.
  *
  * - AgentConnector : file de commandes que l'agent (connexion SORTANTE, compatible CGNAT) vient chercher. Branché.
- * - RestApiConnector : appel direct de l'API REST RouterOS quand l'IP du routeur est joignable. NON branché.
+ * - RestApiConnector : appel direct de l'API REST RouterOS (HTTPS) quand le routeur est joignable depuis le serveur. Branché.
  */
 interface NetworkConnector
 {
