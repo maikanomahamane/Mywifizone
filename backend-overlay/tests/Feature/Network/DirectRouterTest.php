@@ -239,9 +239,7 @@ class DirectRouterTest extends TestCase
         $this->postJson("/api/v1/routers/$routerId/test")->assertStatus(404);
         $this->postJson("/api/v1/routers/$routerId/reconnect", ['username' => 'a', 'password' => 'b'])->assertStatus(404);
 
-        [, $owner] = $this->tenantWithOwner(plan: 'PRO');
-        [, $own, , $mine] = $this->connected();
-        Sanctum::actingAs($own);
-        $this->postJson("/api/v1/routers/$mine/rotate-agent-token")->assertStatus(409)->assertJsonPath('errors.0.code', 'not_agent_router');
+        Sanctum::actingAs(\App\Models\User::withoutGlobalScopes()->where('tenant_id', Router::withoutGlobalScopes()->find($routerId)->tenant_id)->firstOrFail());
+        $this->postJson("/api/v1/routers/$routerId/rotate-agent-token")->assertStatus(409)->assertJsonPath('errors.0.code', 'not_agent_router');
     }
 }

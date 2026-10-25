@@ -127,6 +127,7 @@ final class FakeRouterOs
 
     private function patchSystemUser(string $id, array $body)
     {
+        $id = urldecode($id);
         foreach ($this->systemUsers as $name => $u) {
             if ($u['id'] === $id) {
                 $this->systemUsers[$name] = array_merge($u, array_intersect_key($body, array_flip(['password', 'group'])));
