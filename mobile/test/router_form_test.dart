@@ -40,7 +40,10 @@ void main() {
     await tester.pumpWidget(_app());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Créer'));
+    final create = find.widgetWithText(FilledButton, 'Créer');
+    await tester.ensureVisible(create);
+    await tester.pumpAndSettle();
+    await tester.tap(create);
     await tester.pumpAndSettle();
 
     expect(find.text('Données invalides. Vérifiez les champs.'), findsOneWidget);

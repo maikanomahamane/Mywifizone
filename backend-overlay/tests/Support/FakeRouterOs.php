@@ -41,7 +41,7 @@ final class FakeRouterOs
             if ($this->down) {
                 throw new ConnectionException('cURL error 7: Failed to connect');
             }
-            if (! str_starts_with($request->url(), "https://{$this->host}:{$this->port}/rest")) {
+            if (! str_starts_with($request->url(), $this->prefix())) {
                 throw new ConnectionException('cURL error 6: Could not resolve host');
             }
 
@@ -51,9 +51,15 @@ final class FakeRouterOs
         return $this;
     }
 
+    /** Guzzle retire le port par défaut (443) de l'URL : on compare avec la forme normalisée. */
+    private function prefix(): string
+    {
+        return 'https://'.$this->host.($this->port === 443 ? '' : ':'.$this->port).'/rest';
+    }
+
     private function handle(Request $request)
     {
-        $path = substr($request->url(), strlen("https://{$this->host}:{$this->port}/rest"));
+        $path = substr($request->url(), strlen($this->prefix()));
         $method = $request->method();
         $body = $request->data();
         [$user, $pass] = explode(':', base64_decode(substr((string) $request->header('Authorization')[0], 6)), 2) + [1 => ''];
