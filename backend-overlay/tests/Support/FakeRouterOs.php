@@ -80,7 +80,7 @@ final class FakeRouterOs
                 'total-memory' => '1073741824', 'uptime' => '1d2h3m4s',
             ]),
             $path === '/ip/hotspot' && $method === 'GET' => Http::response($this->servers),
-            $path === '/user/group' => $this->crud($this->groups, $method, $path, '/user/group', $body),
+            $path === '/user/group' || str_starts_with($path, '/user/group/') => $this->crud($this->groups, $method, $path, '/user/group', $body),
             $path === '/user' && $method === 'GET' => Http::response(array_map(fn ($n, $u) => ['.id' => $u['id'], 'name' => $n, 'group' => $u['group']], array_keys($this->systemUsers), $this->systemUsers)),
             $path === '/user' && $method === 'PUT' => $this->createSystemUser($body),
             str_starts_with($path, '/user/') && $method === 'PATCH' => $this->patchSystemUser(substr($path, 6), $body),

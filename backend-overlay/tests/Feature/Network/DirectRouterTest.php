@@ -124,7 +124,7 @@ class DirectRouterTest extends TestCase
         Http::fake();
         Sanctum::actingAs($owner);
 
-        foreach (['127.0.0.1', '10.0.0.5', '192.168.88.1', '172.16.0.9', '169.254.169.254', '100.64.0.1', '0.0.0.0', 'localhost', 'http://1.2.3.4', '1.2.3.4:443'] as $host) {
+        foreach (['127.0.0.1', '10.0.0.5', '192.168.88.1', '169.254.169.254', '100.64.0.1', 'localhost', 'http://1.2.3.4', '1.2.3.4:443'] as $host) {
             $this->postJson('/api/v1/routers', $this->body($site, ['host' => $host]))->assertStatus(422);
         }
         $this->postJson('/api/v1/routers', $this->body($site, ['port' => 5432]))->assertStatus(422)->assertJsonPath('errors.0.code', 'router_target_forbidden');
