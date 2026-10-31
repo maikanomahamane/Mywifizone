@@ -1,7 +1,7 @@
 # Image de production : code COPIÉ dans l'image (pas de volume), dépendances sans dev, caches Laravel pré-chauffés.
 # Construire APRÈS `make setup` (le dossier backend/ contient le squelette Laravel + l'overlay) :
 #   docker build -f docker/php/Dockerfile.prod -t mywifizone-app:<version> .
-FROM php:8.3-fpm-alpine AS base
+FROM php:8.5-fpm-alpine AS base
 
 RUN apk add --no-cache icu-libs libzip libpq oniguruma freetype libjpeg-turbo libpng \
     && apk add --no-cache --virtual .build git unzip icu-dev libzip-dev postgresql-dev oniguruma-dev freetype-dev libjpeg-turbo-dev libpng-dev $PHPIZE_DEPS \
